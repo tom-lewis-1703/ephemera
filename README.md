@@ -1,5 +1,5 @@
 # ephemera
-// TODO: Add simple overview of use/purpose
+Opens a PR, get a live environment at its own URL. Close it, the environment goes away.
 
 ## Description
 // TODO: An in-depth paragraph about your project and overview of use
