@@ -45,17 +45,17 @@ curl hello.127.0.0.1.nip.io
 - Envoy Gateway with a shared Gateway, exposed through a NodePort
 - A hand-written `whoami` app that returns a 200 through the Gateway at its own hostname
 
-**Phase 1: write the operator. Up next.**
+**Phase 1: write the operator. In progress.**
 
-- Add a custom resource and a reconciler
-- Have the reconciler build the same four objects as `hack/hello-world.yaml`, in Go
+- Add a custom resource: done, as `PreviewEnvironment`
+- Have the reconciler build the same four objects as `hack/hello-world.yaml`, in Go: not started
 
 **After that:**
 
 - Connect it to GitHub so opening and closing a PR drives the whole thing
 - Add HTTPS (port 443 is already mapped in the kind config, but there's no HTTPS listener yet)
 
-The Go code in this repo is still the Kubebuilder scaffold. The manager builds, but there are no controllers registered, so it doesn't do anything yet. The working part today is the YAML in `hack/`.
+The `PreviewEnvironment` type is defined and its CRD installs, but the controller's `Reconcile` function is still empty, so creating one doesn't do anything yet. The working part today is the YAML in `hack/`.
 
 ## Try it locally
 
@@ -148,7 +148,7 @@ make test-e2e  # run e2e tests in a throwaway kind cluster
 
 ## Built with
 
-Go, [Kubebuilder](https://book.kubebuilder.io/), [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), [Envoy Gateway](https://gateway.envoyproxy.io/), the [Gateway API](https://gateway-api.sigs.k8s.io/) and [kind](https://kind.sigs.k8s.io/).
+Go, [Kubebuilder](https://book.kubebuilder.io/), [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), [Envoy Gateway](https://gateway.envoyproxy.io/), the [Gateway API](https://gateway-api.sigs.k8s.io/), [Helm](https://helm.sh/) and [kind](https://kind.sigs.k8s.io/).
 
 ## Contributing
 
