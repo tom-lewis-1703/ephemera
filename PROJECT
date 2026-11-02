@@ -13,8 +13,8 @@ resources:
     crdVersion: v1
   controller: true
   domain: ephemera.dev
-  group: preview
-  kind: PreviewEnvironment
+  group: redteam
+  kind: RedTeamRun
   path: github.com/tom-lewis-1703/ephemera/api/v1alpha1
   version: v1alpha1
 version: "3"

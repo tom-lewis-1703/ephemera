@@ -27,10 +27,10 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	previewv1alpha1 "github.com/tom-lewis-1703/ephemera/api/v1alpha1"
+	redteamv1alpha1 "github.com/tom-lewis-1703/ephemera/api/v1alpha1"
 )
 
-var _ = Describe("PreviewEnvironment Controller", func() {
+var _ = Describe("RedTeamRun Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
 			resourceName      = "test-resource"
@@ -43,13 +43,13 @@ var _ = Describe("PreviewEnvironment Controller", func() {
 			Name:      resourceName,
 			Namespace: resourceNamespace,
 		}
-		previewenvironment := &previewv1alpha1.PreviewEnvironment{}
+		redteamrun := &redteamv1alpha1.RedTeamRun{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind PreviewEnvironment")
-			err := k8sClient.Get(ctx, typeNamespacedName, previewenvironment)
+			By("creating the custom resource for the Kind RedTeamRun")
+			err := k8sClient.Get(ctx, typeNamespacedName, redteamrun)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &previewv1alpha1.PreviewEnvironment{
+				resource := &redteamv1alpha1.RedTeamRun{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: resourceNamespace,
@@ -62,16 +62,16 @@ var _ = Describe("PreviewEnvironment Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &previewv1alpha1.PreviewEnvironment{}
+			resource := &redteamv1alpha1.RedTeamRun{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance PreviewEnvironment")
+			By("Cleanup the specific resource instance RedTeamRun")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &PreviewEnvironmentReconciler{
+			controllerReconciler := &RedTeamRunReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}

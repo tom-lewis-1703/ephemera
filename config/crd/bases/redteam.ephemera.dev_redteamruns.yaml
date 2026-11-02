@@ -4,21 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: previewenvironments.preview.ephemera.dev
+  name: redteamruns.redteam.ephemera.dev
 spec:
-  group: preview.ephemera.dev
+  group: redteam.ephemera.dev
   names:
-    kind: PreviewEnvironment
-    listKind: PreviewEnvironmentList
-    plural: previewenvironments
-    singular: previewenvironment
+    kind: RedTeamRun
+    listKind: RedTeamRunList
+    plural: redteamruns
+    singular: redteamrun
   scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PreviewEnvironment is the Schema for the previewenvironments
-          API
+        description: RedTeamRun is the Schema for the redteamruns API
         properties:
           apiVersion:
             description: |-
@@ -38,22 +37,19 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of PreviewEnvironment
+            description: spec defines the desired state of RedTeamRun
             properties:
-              image:
-                description: image is the container image this preview environment
-                  runs.
-                minLength: 1
+              foo:
+                description: foo is an example field of RedTeamRun. Edit redteamrun_types.go
+                  to remove/update
                 type: string
-            required:
-            - image
             type: object
           status:
-            description: status defines the observed state of PreviewEnvironment
+            description: status defines the observed state of RedTeamRun
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the PreviewEnvironment resource.
+                  conditions represent the current state of the RedTeamRun resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:

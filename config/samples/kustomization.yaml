@@ -1,4 +1,4 @@
 ## Append samples of your project ##
 resources:
-- preview_v1alpha1_previewenvironment.yaml
+- redteam_v1alpha1_redteamrun.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

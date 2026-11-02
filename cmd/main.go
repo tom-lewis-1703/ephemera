@@ -35,7 +35,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	previewv1alpha1 "github.com/tom-lewis-1703/ephemera/api/v1alpha1"
+	redteamv1alpha1 "github.com/tom-lewis-1703/ephemera/api/v1alpha1"
 	"github.com/tom-lewis-1703/ephemera/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -48,7 +48,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(previewv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(redteamv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -178,11 +178,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.PreviewEnvironmentReconciler{
+	if err := (&controller.RedTeamRunReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "previewenvironment")
+		setupLog.Error(err, "Failed to create controller", "controller", "redteamrun")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

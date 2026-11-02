@@ -24,28 +24,27 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// PreviewEnvironmentSpec defines the desired state of PreviewEnvironment
-type PreviewEnvironmentSpec struct {
+// RedTeamRunSpec defines the desired state of RedTeamRun
+type RedTeamRunSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// image is the container image this preview environment runs.
-	// +required
-	// +kubebuilder:validation:MinLength=1
-	Image string `json:"image"`
+	// foo is an example field of RedTeamRun. Edit redteamrun_types.go to remove/update
+	// +optional
+	Foo *string `json:"foo,omitempty"`
 }
 
-// PreviewEnvironmentStatus defines the observed state of PreviewEnvironment.
-type PreviewEnvironmentStatus struct {
+// RedTeamRunStatus defines the observed state of RedTeamRun.
+type RedTeamRunStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 
-	// conditions represent the current state of the PreviewEnvironment resource.
+	// conditions represent the current state of the RedTeamRun resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
 	// Standard condition types include:
@@ -64,35 +63,35 @@ type PreviewEnvironmentStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
 
-// PreviewEnvironment is the Schema for the previewenvironments API
-type PreviewEnvironment struct {
+// RedTeamRun is the Schema for the redteamruns API
+type RedTeamRun struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// metadata is a standard object metadata
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of PreviewEnvironment
+	// spec defines the desired state of RedTeamRun
 	// +required
-	Spec PreviewEnvironmentSpec `json:"spec"`
+	Spec RedTeamRunSpec `json:"spec"`
 
-	// status defines the observed state of PreviewEnvironment
+	// status defines the observed state of RedTeamRun
 	// +optional
-	Status PreviewEnvironmentStatus `json:"status,omitzero"`
+	Status RedTeamRunStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// PreviewEnvironmentList contains a list of PreviewEnvironment
-type PreviewEnvironmentList struct {
+// RedTeamRunList contains a list of RedTeamRun
+type RedTeamRunList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitzero"`
-	Items           []PreviewEnvironment `json:"items"`
+	Items           []RedTeamRun `json:"items"`
 }
 
 func init() {
 	SchemeBuilder.Register(func(s *runtime.Scheme) error {
-		s.AddKnownTypes(SchemeGroupVersion, &PreviewEnvironment{}, &PreviewEnvironmentList{})
+		s.AddKnownTypes(SchemeGroupVersion, &RedTeamRun{}, &RedTeamRunList{})
 		return nil
 	})
 }

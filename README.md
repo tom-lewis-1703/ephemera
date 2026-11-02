@@ -1,45 +1,36 @@
 # ephemera
 
-Open a PR, get a live environment at its own URL. Close it, and the environment goes away.
+Give every AI red team run its own disposable Kubernetes sandbox. The run attacks the model, the report comes out, and the sandbox gets deleted.
 
-That's the goal, anyway. Right now the routing layer works and the operator that automates it is what I'm building next. See [Status](#status) for exactly where things stand.
+That's the goal, anyway. Right now the operator's API type exists but doesn't do anything yet. See [Status](#status) for exactly where things stand.
 
 ## Why I'm building this
 
-Preview environments are one of those things that are really nice to have when a team has them. Reviewers can click a link and try the change instead of pulling the branch and running it themselves. Plenty of hosted platforms do this for you, but I wanted to understand how it works underneath, so I'm building one on Kubernetes as a personal project during my senior year of college.
+Red teaming a model means attacking it on purpose to find its weaknesses. If you do that on shared infrastructure, one run can affect the next, and the target can end up sitting near things it shouldn't be able to reach, like your API keys. A fresh sandbox for each run avoids both problems, and because the environment is defined in code, you can recreate it for a later run.
 
-It's also my excuse to learn how operators, the Gateway API and Envoy actually fit together.
+This started as a preview environment tool: open a PR, get a live environment, close it, and the environment goes away. I switched to red teaming because the same pattern fits, and isolation matters more when the thing inside the environment is being attacked. I'm building it as a personal project during my senior year of college.
+
+It's also my excuse to learn how operators and Kubernetes actually fit together.
 
 ## How it will work
 
-For each open PR, the operator will create four objects:
+You create a `RedTeamRun` object, and the operator handles the rest:
 
-| Object | What it's for |
-| --- | --- |
-| Namespace | Keeps each preview separate and carries the `ephemera.dev/preview: "true"` label |
-| Deployment | Runs the app |
-| Service | Gives the pods a stable ClusterIP |
-| HTTPRoute | Maps the preview's hostname to the Service |
+1. Create a new namespace for the run
+2. Start the target model in it
+3. Run [garak](https://github.com/NVIDIA/garak), an open-source tool that attacks a model and reports the results, as a Job
+4. Save the report outside the namespace
+5. Delete the namespace and everything in it
 
-When the PR closes, the environment gets torn down.
+None of this is built yet. The first version will use a small open-weight model that runs on a CPU.
 
-All previews share one Gateway. Its listener only accepts routes from namespaces with the preview label, so a route in any other namespace can't attach to it.
-
-This is the path a request takes today:
-
-```text
-curl hello.127.0.0.1.nip.io
-  -> port 80 on the host
-  -> port 30080 on the kind node
-  -> Envoy proxy (Gateway "ephemera")
-  -> HTTPRoute in the preview namespace
-  -> Service
-  -> Pod
-```
+A namespace on its own doesn't isolate much, so the sandbox will also need network rules that block traffic by default, along with tests that check those rules hold. Model output can vary between runs too, so repeatable here means pinned versions and recorded settings, with results reported as success rates.
 
 ## Status
 
 **Phase 0: prove the routing by hand. Done.**
+
+This came from the preview environment design and is the only part that runs today.
 
 - kind cluster with host port mappings
 - Envoy Gateway with a shared Gateway, exposed through a NodePort
@@ -47,19 +38,20 @@ curl hello.127.0.0.1.nip.io
 
 **Phase 1: write the operator. In progress.**
 
-- Add a custom resource: done, as `PreviewEnvironment`
-- Have the reconciler build the same four objects as `hack/hello-world.yaml`, in Go: not started
+- Add a custom resource: generated as `RedTeamRun`, replacing the old `PreviewEnvironment`, but it has no real fields yet
+- Have the reconciler create the sandbox, run garak, save the report and clean up: not started
 
 **After that:**
 
-- Connect it to GitHub so opening and closing a PR drives the whole thing
-- Add HTTPS (port 443 is already mapped in the kind config, but there's no HTTPS listener yet)
+- Lock down the sandbox and write tests that try to break out of it
+- Test AI agents using fake tools and fake credentials
+- Trigger runs from pull requests
 
-The `PreviewEnvironment` type is defined and its CRD installs, but the controller's `Reconcile` function is still empty, so creating one doesn't do anything yet. The working part today is the YAML in `hack/`.
+The controller's `Reconcile` function is still empty, so creating a `RedTeamRun` doesn't do anything yet.
 
 ## Try it locally
 
-This runs the Phase 0 setup on your own machine. I develop on WSL 2 with Ubuntu 24.04, so the commands are written for a bash shell. Run them from the root of the repo.
+This runs the Phase 0 routing setup on your own machine. It doesn't involve the operator or any models. I develop on WSL 2 with Ubuntu 24.04, so the commands are written for a bash shell. Run them from the root of the repo.
 
 ### Prerequisites
 
@@ -109,6 +101,18 @@ curl http://hello.127.0.0.1.nip.io
 
 You should get a 200 back from the `whoami` pod, with details about the request. [nip.io](https://nip.io) is a public DNS service that resolves that hostname to `127.0.0.1`, so there's no hosts file to edit, but you do need internet access for the lookup.
 
+This is the path that request takes:
+
+```text
+curl hello.127.0.0.1.nip.io
+  -> port 80 on the host
+  -> port 30080 on the kind node
+  -> Envoy proxy (Gateway "ephemera")
+  -> HTTPRoute in the preview namespace
+  -> Service
+  -> Pod
+```
+
 ### Clean up
 
 ```sh
@@ -128,8 +132,10 @@ kind delete cluster --name ephemera
 | Path | What's in it |
 | --- | --- |
 | `hack/kind-config.yaml` | Local cluster and host port mappings |
-| `hack/gateway.yaml` | Namespace, EnvoyProxy config, GatewayClass and Gateway |
-| `hack/hello-world.yaml` | The manual smoke test, and the reference for what the reconciler will build |
+| `hack/gateway.yaml` | Namespace, EnvoyProxy config, GatewayClass and Gateway, from the preview design |
+| `hack/hello-world.yaml` | The manual routing smoke test, from the preview design |
+| `api/v1alpha1/` | The `RedTeamRun` type (Kubebuilder scaffold) |
+| `internal/controller/` | The `RedTeamRun` controller, with `Reconcile` still empty (Kubebuilder scaffold) |
 | `cmd/main.go` | Operator entry point (Kubebuilder scaffold) |
 | `config/` | Kustomize manifests for deploying the operator (Kubebuilder scaffold) |
 | `test/` | End-to-end test setup (Kubebuilder scaffold) |

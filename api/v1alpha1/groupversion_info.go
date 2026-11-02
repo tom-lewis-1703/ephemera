@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha1 contains API Schema definitions for the preview v1alpha1 API group.
+// Package v1alpha1 contains API Schema definitions for the redteam v1alpha1 API group.
 // +kubebuilder:object:generate=true
-// +groupName=preview.ephemera.dev
+// +groupName=redteam.ephemera.dev
 package v1alpha1
 
 import (
@@ -28,7 +28,7 @@ import (
 var (
 	// SchemeGroupVersion is group version used to register these objects.
 	// This name is used by applyconfiguration generators (e.g. controller-gen).
-	SchemeGroupVersion = schema.GroupVersion{Group: "preview.ephemera.dev", Version: "v1alpha1"}
+	SchemeGroupVersion = schema.GroupVersion{Group: "redteam.ephemera.dev", Version: "v1alpha1"}
 
 	// GroupVersion is an alias for SchemeGroupVersion, for backward compatibility.
 	GroupVersion = SchemeGroupVersion

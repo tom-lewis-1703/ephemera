@@ -1,7 +1,7 @@
 # This rule is not used by the project ephemera itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
-# Grants permissions to create, update, and delete resources within the preview.ephemera.dev.
+# Grants permissions to create, update, and delete resources within the redteam.ephemera.dev.
 # This role is intended for users who need to manage these resources
 # but should not control RBAC or manage permissions for others.
 
@@ -11,12 +11,12 @@ metadata:
   labels:
     app.kubernetes.io/name: ephemera
     app.kubernetes.io/managed-by: kustomize
-  name: previewenvironment-editor-role
+  name: redteamrun-editor-role
 rules:
 - apiGroups:
-  - preview.ephemera.dev
+  - redteam.ephemera.dev
   resources:
-  - previewenvironments
+  - redteamruns
   verbs:
   - create
   - delete
@@ -26,8 +26,8 @@ rules:
   - update
   - watch
 - apiGroups:
-  - preview.ephemera.dev
+  - redteam.ephemera.dev
   resources:
-  - previewenvironments/status
+  - redteamruns/status
   verbs:
   - get

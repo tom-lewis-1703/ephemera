@@ -1,9 +1,9 @@
-apiVersion: preview.ephemera.dev/v1alpha1
-kind: PreviewEnvironment
+apiVersion: redteam.ephemera.dev/v1alpha1
+kind: RedTeamRun
 metadata:
   labels:
     app.kubernetes.io/name: ephemera
     app.kubernetes.io/managed-by: kustomize
-  name: previewenvironment-sample
+  name: redteamrun-sample
 spec:
   # TODO(user): Add fields here

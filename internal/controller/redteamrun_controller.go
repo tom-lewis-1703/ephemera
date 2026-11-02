@@ -24,29 +24,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	previewv1alpha1 "github.com/tom-lewis-1703/ephemera/api/v1alpha1"
+	redteamv1alpha1 "github.com/tom-lewis-1703/ephemera/api/v1alpha1"
 )
 
-// PreviewEnvironmentReconciler reconciles a PreviewEnvironment object
-type PreviewEnvironmentReconciler struct {
+// RedTeamRunReconciler reconciles a RedTeamRun object
+type RedTeamRunReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=preview.ephemera.dev,resources=previewenvironments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=preview.ephemera.dev,resources=previewenvironments/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=preview.ephemera.dev,resources=previewenvironments/finalizers,verbs=update
+// +kubebuilder:rbac:groups=redteam.ephemera.dev,resources=redteamruns,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=redteam.ephemera.dev,resources=redteamruns/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=redteam.ephemera.dev,resources=redteamruns/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
-// the PreviewEnvironment object against the actual cluster state, and then
+// the RedTeamRun object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/reconcile
-func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *RedTeamRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
 
 	// TODO(user): your logic here
@@ -55,9 +55,9 @@ func (r *PreviewEnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.R
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *PreviewEnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *RedTeamRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&previewv1alpha1.PreviewEnvironment{}).
-		Named("previewenvironment").
+		For(&redteamv1alpha1.RedTeamRun{}).
+		Named("redteamrun").
 		Complete(r)
 }

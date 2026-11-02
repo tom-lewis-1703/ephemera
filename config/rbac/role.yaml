@@ -5,9 +5,9 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - preview.ephemera.dev
+  - redteam.ephemera.dev
   resources:
-  - previewenvironments
+  - redteamruns
   verbs:
   - create
   - delete
@@ -17,15 +17,15 @@ rules:
   - update
   - watch
 - apiGroups:
-  - preview.ephemera.dev
+  - redteam.ephemera.dev
   resources:
-  - previewenvironments/finalizers
+  - redteamruns/finalizers
   verbs:
   - update
 - apiGroups:
-  - preview.ephemera.dev
+  - redteam.ephemera.dev
   resources:
-  - previewenvironments/status
+  - redteamruns/status
   verbs:
   - get
   - patch

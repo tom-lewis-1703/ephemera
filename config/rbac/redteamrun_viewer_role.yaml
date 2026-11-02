@@ -1,7 +1,7 @@
 # This rule is not used by the project ephemera itself.
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
-# Grants read-only access to preview.ephemera.dev resources.
+# Grants read-only access to redteam.ephemera.dev resources.
 # This role is intended for users who need visibility into these resources
 # without permissions to modify them. It is ideal for monitoring purposes and limited-access viewing.
 
@@ -11,19 +11,19 @@ metadata:
   labels:
     app.kubernetes.io/name: ephemera
     app.kubernetes.io/managed-by: kustomize
-  name: previewenvironment-viewer-role
+  name: redteamrun-viewer-role
 rules:
 - apiGroups:
-  - preview.ephemera.dev
+  - redteam.ephemera.dev
   resources:
-  - previewenvironments
+  - redteamruns
   verbs:
   - get
   - list
   - watch
 - apiGroups:
-  - preview.ephemera.dev
+  - redteam.ephemera.dev
   resources:
-  - previewenvironments/status
+  - redteamruns/status
   verbs:
   - get
