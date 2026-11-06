@@ -6,7 +6,6 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: redteamrun-sample
 spec:
-  # Placeholder until the first runnable target image is chosen.
-  targetImage: example.com/target-model:latest
+  targetImage: ephemera-target:qwen2.5-0.5b
   probes:
     - promptinject

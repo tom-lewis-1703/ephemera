@@ -22,7 +22,7 @@ You create a `RedTeamRun` object, and the operator handles the rest:
 4. Save the report outside the namespace
 5. Delete the namespace and everything in it
 
-Only step 1 works so far, along with deleting the namespace when the run is deleted. The first version will use a small open-weight model that runs on a CPU.
+Steps 1 and 2 work so far, and deleting the run deletes everything in the namespace. The target is a small open-weight model, `qwen2.5:0.5b`, that runs on a CPU.
 
 A namespace on its own doesn't isolate much, so the sandbox will also need network rules that block traffic by default, along with tests that check those rules hold. Model output can vary between runs too, so repeatable here means pinned versions and recorded settings, with results reported as success rates.
 
@@ -40,7 +40,8 @@ This came from the preview environment design and is the only part that runs tod
 
 - Add a custom resource: done, as `RedTeamRun`, with a target image and a list of garak probes. The spec can't change after a run is created
 - Create a namespace for each run: done. The run owns it, so deleting the run deletes the namespace, and the operator recreates it if someone deletes it by hand
-- Start the model, run garak and save the report: not started
+- Start the target model in the namespace, behind a Service called `target`: done
+- Run garak and save the report: not started
 
 **After that:**
 
@@ -48,7 +49,7 @@ This came from the preview environment design and is the only part that runs tod
 - Test AI agents using fake tools and fake credentials
 - Trigger runs from pull requests
 
-Creating a `RedTeamRun` gets you an empty, labeled namespace called `redteam-<run name>`, and that's all for now. The operator refuses to use a namespace with that name if it already exists and wasn't created for the run, since deleting the run would delete it too. Run names have to work as part of a namespace name, so they can be at most 55 characters with no dots.
+Creating a `RedTeamRun` gets you a namespace called `redteam-<run name>` with the target model running in it, reachable at `http://target:11434`. Nothing attacks it yet. The operator refuses to use a namespace with that name if it already exists and was not created for the run, since deleting the run would delete it too. Run names have to work as part of a namespace name, so they can be at most 55 characters with no dots.
 
 ## Try it locally
 
@@ -137,7 +138,7 @@ kind delete cluster --name ephemera
 | `hack/hello-world.yaml` | The manual routing smoke test, from the preview design |
 | `images/target-model/` | Dockerfile for the target model: Ollama with `qwen2.5:0.5b` built in, so it runs offline |
 | `api/v1alpha1/` | The `RedTeamRun` type (Kubebuilder scaffold) |
-| `internal/controller/` | The `RedTeamRun` controller, which creates each run's namespace |
+| `internal/controller/` | The `RedTeamRun` controller, which creates the namespace and target model for each run |
 | `cmd/main.go` | Operator entry point (Kubebuilder scaffold) |
 | `config/` | Kustomize manifests for deploying the operator (Kubebuilder scaffold) |
 | `test/` | End-to-end test setup (Kubebuilder scaffold) |

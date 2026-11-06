@@ -8,6 +8,16 @@ rules:
   - ""
   resources:
   - namespaces
+  - services
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
   verbs:
   - create
   - get
