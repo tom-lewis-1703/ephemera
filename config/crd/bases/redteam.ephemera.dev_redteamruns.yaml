@@ -14,7 +14,11 @@ spec:
     singular: redteamrun
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.namespace
+      name: Namespace
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: RedTeamRun is the Schema for the redteamruns API
@@ -134,10 +138,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              namespace:
+                description: namespace is the sandbox namespace created for this run.
+                type: string
             type: object
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: name must be at most 55 characters, so the sandbox namespace name
+            fits in 63
+          rule: self.metadata.name.size() <= 55
+        - message: name must be a valid DNS label, since it becomes part of a namespace
+            name
+          rule: self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
     served: true
     storage: true
     subresources:

@@ -18,83 +18,84 @@ package controller
 
 import (
 	"context"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	redteamv1alpha1 "github.com/tom-lewis-1703/ephemera/api/v1alpha1"
 )
 
+// envtest runs an API server but no garbage collector, so these tests check
+// owner references rather than the namespace actually being deleted.
 var _ = Describe("RedTeamRun Controller", func() {
-	Context("When reconciling a resource", func() {
-		const (
-			resourceName      = "test-resource"
-			resourceNamespace = "default"
-		)
+	ctx := context.Background()
 
-		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: resourceNamespace,
+	newRun := func(name string) *redteamv1alpha1.RedTeamRun {
+		return &redteamv1alpha1.RedTeamRun{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: redteamv1alpha1.RedTeamRunSpec{
+				TargetImage: "example.com/target-model:test",
+				Probes:      []string{"test.Blank"},
+			},
 		}
-		redteamrun := &redteamv1alpha1.RedTeamRun{}
+	}
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind RedTeamRun")
-			err := k8sClient.Get(ctx, typeNamespacedName, redteamrun)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &redteamv1alpha1.RedTeamRun{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: resourceNamespace,
-					},
-					Spec: redteamv1alpha1.RedTeamRunSpec{
-						TargetImage: "example.com/target-model:test",
-						Probes:      []string{"test.Blank"},
-					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
+	createRun := func(name string) *redteamv1alpha1.RedTeamRun {
+		run := newRun(name)
+		Expect(k8sClient.Create(ctx, run)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, run))).To(Succeed())
 		})
+		return run
+	}
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &redteamv1alpha1.RedTeamRun{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+	reconcileRun := func(name string) error {
+		r := &RedTeamRunReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
+		return err
+	}
 
-			By("Cleanup the specific resource instance RedTeamRun")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &RedTeamRunReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+	It("creates a sandbox namespace owned by the run", func() {
+		run := createRun("creates-namespace")
+		Expect(reconcileRun(run.Name)).To(Succeed())
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+		var ns corev1.Namespace
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "redteam-creates-namespace"}, &ns)).To(Succeed())
+		Expect(ns.Labels).To(HaveKeyWithValue(runLabel, run.Name))
+		Expect(metav1.IsControlledBy(&ns, run)).To(BeTrue())
 
-		It("should reject changes to the spec", func() {
-			resource := &redteamv1alpha1.RedTeamRun{}
-			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run)).To(Succeed())
+		Expect(run.Status.Namespace).To(Equal("redteam-creates-namespace"))
 
-			resource.Spec.Probes = []string{"test.Blank", "dan"}
-			err := k8sClient.Update(ctx, resource)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("spec is immutable"))
-		})
+		By("reconciling again with nothing changed")
+		Expect(reconcileRun(run.Name)).To(Succeed())
+	})
+
+	It("refuses to take over a namespace it didn't create", func() {
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "redteam-taken"}}
+		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+		run := createRun("taken")
+
+		Expect(reconcileRun(run.Name)).To(MatchError(ContainSubstring("doesn't belong to this run")))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+		Expect(ns.OwnerReferences).To(BeEmpty())
+	})
+
+	It("rejects changes to the spec", func() {
+		run := createRun("immutable-spec")
+
+		run.Spec.Probes = []string{"test.Blank", "dan"}
+		Expect(k8sClient.Update(ctx, run)).To(MatchError(ContainSubstring("spec is immutable")))
+	})
+
+	It("rejects names that can't become a namespace name", func() {
+		Expect(k8sClient.Create(ctx, newRun("has.dots"))).To(MatchError(ContainSubstring("valid DNS label")))
+		Expect(k8sClient.Create(ctx, newRun(strings.Repeat("a", 56)))).To(MatchError(ContainSubstring("at most 55")))
 	})
 })

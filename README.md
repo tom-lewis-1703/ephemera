@@ -2,7 +2,7 @@
 
 Give every AI red team run its own disposable Kubernetes sandbox. The run attacks the model, the report comes out, and the sandbox gets deleted.
 
-That's the goal, anyway. Right now the operator's API type exists but doesn't do anything yet. See [Status](#status) for exactly where things stand.
+That's the goal, anyway. Right now the operator creates and cleans up a namespace for each run, but nothing runs inside it yet. See [Status](#status) for exactly where things stand.
 
 ## Why I'm building this
 
@@ -22,7 +22,7 @@ You create a `RedTeamRun` object, and the operator handles the rest:
 4. Save the report outside the namespace
 5. Delete the namespace and everything in it
 
-None of this is built yet. The first version will use a small open-weight model that runs on a CPU.
+Only step 1 works so far, along with deleting the namespace when the run is deleted. The first version will use a small open-weight model that runs on a CPU.
 
 A namespace on its own doesn't isolate much, so the sandbox will also need network rules that block traffic by default, along with tests that check those rules hold. Model output can vary between runs too, so repeatable here means pinned versions and recorded settings, with results reported as success rates.
 
@@ -39,7 +39,8 @@ This came from the preview environment design and is the only part that runs tod
 **Phase 1: write the operator. In progress.**
 
 - Add a custom resource: done, as `RedTeamRun`, with a target image and a list of garak probes. The spec can't change after a run is created
-- Have the reconciler create the sandbox, run garak, save the report and clean up: not started
+- Create a namespace for each run: done. The run owns it, so deleting the run deletes the namespace, and the operator recreates it if someone deletes it by hand
+- Start the model, run garak and save the report: not started
 
 **After that:**
 
@@ -47,7 +48,7 @@ This came from the preview environment design and is the only part that runs tod
 - Test AI agents using fake tools and fake credentials
 - Trigger runs from pull requests
 
-The controller's `Reconcile` function is still empty, so creating a `RedTeamRun` doesn't do anything yet.
+Creating a `RedTeamRun` gets you an empty, labeled namespace called `redteam-<run name>`, and that's all for now. The operator refuses to use a namespace with that name if it already exists and wasn't created for the run, since deleting the run would delete it too. Run names have to work as part of a namespace name, so they can be at most 55 characters with no dots.
 
 ## Try it locally
 
@@ -135,7 +136,7 @@ kind delete cluster --name ephemera
 | `hack/gateway.yaml` | Namespace, EnvoyProxy config, GatewayClass and Gateway, from the preview design |
 | `hack/hello-world.yaml` | The manual routing smoke test, from the preview design |
 | `api/v1alpha1/` | The `RedTeamRun` type (Kubebuilder scaffold) |
-| `internal/controller/` | The `RedTeamRun` controller, with `Reconcile` still empty (Kubebuilder scaffold) |
+| `internal/controller/` | The `RedTeamRun` controller, which creates each run's namespace |
 | `cmd/main.go` | Operator entry point (Kubebuilder scaffold) |
 | `config/` | Kustomize manifests for deploying the operator (Kubebuilder scaffold) |
 | `test/` | End-to-end test setup (Kubebuilder scaffold) |

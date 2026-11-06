@@ -65,11 +65,18 @@ type RedTeamRunStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// namespace is the sandbox namespace created for this run.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=".status.namespace"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 55",message="name must be at most 55 characters, so the sandbox namespace name fits in 63"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')",message="name must be a valid DNS label, since it becomes part of a namespace name"
 
 // RedTeamRun is the Schema for the redteamruns API
 type RedTeamRun struct {
