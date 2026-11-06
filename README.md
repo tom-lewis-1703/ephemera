@@ -135,6 +135,7 @@ kind delete cluster --name ephemera
 | `hack/kind-config.yaml` | Local cluster and host port mappings |
 | `hack/gateway.yaml` | Namespace, EnvoyProxy config, GatewayClass and Gateway, from the preview design |
 | `hack/hello-world.yaml` | The manual routing smoke test, from the preview design |
+| `images/target-model/` | Dockerfile for the target model: Ollama with `qwen2.5:0.5b` built in, so it runs offline |
 | `api/v1alpha1/` | The `RedTeamRun` type (Kubebuilder scaffold) |
 | `internal/controller/` | The `RedTeamRun` controller, which creates each run's namespace |
 | `cmd/main.go` | Operator entry point (Kubebuilder scaffold) |
