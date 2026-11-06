@@ -38,8 +38,9 @@ var _ = Describe("RedTeamRun target model", func() {
 		run := &redteamv1alpha1.RedTeamRun{
 			ObjectMeta: metav1.ObjectMeta{Name: "starts-target"},
 			Spec: redteamv1alpha1.RedTeamRunSpec{
-				TargetImage: "example.com/target-model:test",
-				Probes:      []string{"test.Blank"},
+				TargetImage: testTargetImage,
+				TargetModel: testTargetModel,
+				Probes:      []string{testProbe},
 			},
 		}
 		Expect(k8sClient.Create(ctx, run)).To(Succeed())

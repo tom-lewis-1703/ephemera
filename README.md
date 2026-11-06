@@ -1,59 +1,90 @@
 # ephemera
 
-Give every AI red team run its own disposable Kubernetes sandbox. The run attacks the model, the report comes out, and the sandbox gets deleted.
+Give every AI red team run its own disposable Kubernetes sandbox. The run attacks the model, the results come out, and the sandbox gets deleted.
 
-That's the goal, anyway. Right now the operator creates and cleans up a namespace for each run, but nothing runs inside it yet. See [Status](#status) for exactly where things stand.
+The first version of that works on a local kind cluster. The sandbox isn't locked down yet, though, so read [Limitations](#limitations) before trusting it with anything.
 
 ## Why I'm building this
 
 Red teaming a model means attacking it on purpose to find its weaknesses. If you do that on shared infrastructure, one run can affect the next, and the target can end up sitting near things it shouldn't be able to reach, like your API keys. A fresh sandbox for each run avoids both problems, and because the environment is defined in code, you can recreate it for a later run.
 
-This started as a preview environment tool: open a PR, get a live environment, close it, and the environment goes away. I switched to red teaming because the same pattern fits, and isolation matters more when the thing inside the environment is being attacked. I'm building it as a personal project during my senior year of college.
+This started as a preview environment tool: open a PR, get a live environment, close it, and the environment goes away. I switched to red teaming after seeing the [Binance hack](https://www.staradvertiser.com/2026/10/29/breaking-news/hack-hits-cryptocurrency-exchange-binance-causing-6-3b-loss/) in October 2026. The same pattern fits, and isolation matters more when the thing inside the environment is being attacked. I'm building it as a personal project during my senior year of college.
 
 It's also my excuse to learn how operators and Kubernetes actually fit together.
 
-## How it will work
+## How it works
 
-You create a `RedTeamRun` object, and the operator handles the rest:
+You create a `RedTeamRun` that names a target model image and the [garak](https://github.com/NVIDIA/garak) probes to attack it with:
 
-1. Create a new namespace for the run
-2. Start the target model in it
-3. Run [garak](https://github.com/NVIDIA/garak), an open-source tool that attacks a model and reports the results, as a Job
-4. Save the report outside the namespace
-5. Delete the namespace and everything in it
+```yaml
+apiVersion: redteam.ephemera.dev/v1alpha1
+kind: RedTeamRun
+metadata:
+  name: redteamrun-sample
+spec:
+  targetImage: ephemera-target:qwen2.5-0.5b
+  targetModel: qwen2.5:0.5b
+  probes:
+    - dan.Dan_11_0
+    - goodside.WhoIsRiley
+```
 
-Steps 1 and 2 work so far, and deleting the run deletes everything in the namespace. The target is a small open-weight model, `qwen2.5:0.5b`, that runs on a CPU.
+garak is an open-source tool that sends attack prompts at a model, then uses detectors to judge whether each response gave in. The operator then:
 
-A namespace on its own doesn't isolate much, so the sandbox will also need network rules that block traffic by default, along with tests that check those rules hold. Model output can vary between runs too, so repeatable here means pinned versions and recorded settings, with results reported as success rates.
+1. Creates a namespace called `redteam-<run name>`, owned by the run
+2. Starts the target model in it, behind a Service called `target`
+3. Waits for the model to be ready, then runs garak against `http://target:11434` as a Job
+4. Copies garak's scores onto the run's status
+5. Deletes the namespace
+
+The run moves through `Pending`, `Running` and then `Succeeded` or `Failed`, and the scores stay on it after the sandbox is gone:
+
+```text
+$ kubectl get redteamrun
+NAME                PHASE       NAMESPACE                   AGE
+redteamrun-sample   Succeeded   redteam-redteamrun-sample   13s
+```
+
+```text
+dan.Dan_11_0         dan.DAN                      passed 0/1
+dan.Dan_11_0         mitigation.MitigationBypass  passed 0/1
+goodside.WhoIsRiley  goodside.RileyIsnt           passed 6/6
+```
+
+`passed` counts the responses the detector judged safe. 0/1 on `dan.DAN` means the DAN jailbreak worked on this model.
+
+A few design choices behind that:
+
+- **Everything in the sandbox is owned by the run.** Deleting a run deletes whatever is left of its sandbox, through Kubernetes' garbage collector, so there's no cleanup code to get wrong. The operator also refuses to use a namespace with the run's name if it already exists and wasn't created for that run, since deleting the run would delete it.
+- **The spec can't change.** A run is a one-off, so a CEL rule on the CRD rejects any edit to the spec. Otherwise the results could describe something that never ran.
+- **Both images work offline.** The target image has the model weights built in, and the harness image has garak built in, so a sandbox doesn't need to download anything when it starts. Both are pinned to exact versions: Ollama 0.40.15 and garak 0.17.1.
+- **Results come back through the termination message.** When garak finishes, a small wrapper script writes a summary of its scores to `/dev/termination-log`. Kubernetes copies that into the pod's status, where the operator reads it, so the operator doesn't need access to pod logs. If garak fails, the end of its log becomes the message instead, and that ends up in the run's status.
+- **A failed run stays failed.** The Job doesn't retry, since a second attempt would mix results from two runs.
+- **No pod gets a Kubernetes API token.** Neither the model nor garak has any reason to talk to the cluster.
 
 ## Status
 
-**Phase 0: prove the routing by hand. Done.**
+**Phase 0: prove the routing by hand. Done.** This came from the preview environment design. See [Routing setup](#routing-setup-from-the-preview-design).
 
-This came from the preview environment design and is the only part that runs today.
+**Phase 1: a working operator. Done.** Runs go from creation to results to cleanup on a kind cluster, using `qwen2.5:0.5b` on a CPU.
 
-- kind cluster with host port mappings
-- Envoy Gateway with a shared Gateway, exposed through a NodePort
-- A hand-written `whoami` app that returns a 200 through the Gateway at its own hostname
+**Next:**
 
-**Phase 1: write the operator. In progress.**
-
-- Add a custom resource: done, as `RedTeamRun`, with a target image and a list of garak probes. The spec can't change after a run is created
-- Create a namespace for each run: done. The run owns it, so deleting the run deletes the namespace, and the operator recreates it if someone deletes it by hand
-- Start the target model in the namespace, behind a Service called `target`: done
-- Run garak and save the report: not started
-
-**After that:**
-
-- Lock down the sandbox and write tests that try to break out of it
+- Lock down the sandbox with network rules, and write tests that try to break out of it
 - Test AI agents using fake tools and fake credentials
 - Trigger runs from pull requests
 
-Creating a `RedTeamRun` gets you a namespace called `redteam-<run name>` with the target model running in it, reachable at `http://target:11434`. Nothing attacks it yet. The operator refuses to use a namespace with that name if it already exists and was not created for the run, since deleting the run would delete it too. Run names have to work as part of a namespace name, so they can be at most 55 characters with no dots.
+## Limitations
 
-## Try it locally
+- **The sandbox isn't isolated yet.** There are no network policies, so pods in the sandbox can reach the internet and other namespaces. That's the next thing I'm working on.
+- **Model output varies between runs.** Three runs of the same sample scored `goodside.WhoIsRiley` at 3/6, 6/6 and 4/6. Pinned images make the setup repeatable, but not the answers, so the results should be read as rates across many prompts and generations.
+- **Only the score summary is kept.** garak's full report is deleted with the sandbox. The summary also has to fit in Kubernetes' 4096-byte termination message limit, which is roughly 30 probe and detector pairs. A run with more fails with a message saying so.
+- **The operator has only run locally**, through `make run`. I haven't deployed it into the cluster yet.
+- **Runs time out after an hour.**
 
-This runs the Phase 0 routing setup on your own machine. It doesn't involve the operator or any models. I develop on WSL 2 with Ubuntu 24.04, so the commands are written for a bash shell. Run them from the root of the repo.
+## Try a red team run
+
+I develop on WSL 2 with Ubuntu 24.04, so the commands are written for a bash shell. Run them from the root of the repo.
 
 ### Prerequisites
 
@@ -62,9 +93,9 @@ The versions in parentheses are what I'm running.
 - [Docker](https://docs.docker.com/get-docker/)
 - [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) (v0.32.0, which runs Kubernetes v1.36.1)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- [Helm](https://helm.sh/docs/intro/install/) (v4.2.3)
+- [Go](https://go.dev/doc/install) 1.26+ (1.26.5)
 - Port 80 and 443 free on your machine, since kind binds to both
-- Go 1.26+ if you want to build the operator scaffold (1.26.5)
+- About 10 GB of free disk space for the two images
 
 ### 1. Create the cluster
 
@@ -72,7 +103,50 @@ The versions in parentheses are what I'm running.
 kind create cluster --config hack/kind-config.yaml
 ```
 
-### 2. Install Envoy Gateway
+### 2. Build the images and load them into kind
+
+```sh
+docker build -t ephemera-target:qwen2.5-0.5b images/target-model
+docker build -t ephemera-harness:garak-0.17.1 images/harness
+kind load docker-image ephemera-target:qwen2.5-0.5b ephemera-harness:garak-0.17.1 --name ephemera
+```
+
+The first builds take a few minutes, since they download the model and garak's dependencies.
+
+### 3. Install the CRD and run the operator
+
+```sh
+make install
+make run
+```
+
+`make run` keeps running in the foreground, so use a second terminal for the next step.
+
+### 4. Start a run
+
+```sh
+kubectl apply -f config/samples/redteam_v1alpha1_redteamrun.yaml
+kubectl get redteamrun -w
+```
+
+Once it says `Succeeded`, print the scores:
+
+```sh
+kubectl get redteamrun redteamrun-sample -o jsonpath='{range .status.results[*]}{.probe}{"  "}{.detector}{"  "}{.passed}/{.total}{"\n"}{end}'
+```
+
+### 5. Clean up
+
+```sh
+kubectl delete redteamrun redteamrun-sample
+kind delete cluster --name ephemera
+```
+
+## Routing setup from the preview design
+
+Before the switch to red teaming, Phase 0 proved that a request could reach a preview app through a shared Gateway at its own hostname. The operator doesn't use any of this, but it still works. It needs the cluster from step 1 above, plus [Helm](https://helm.sh/docs/intro/install/) (v4.2.3).
+
+### Install Envoy Gateway
 
 ```sh
 helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.8.3 -n envoy-gateway-system --create-namespace
@@ -81,23 +155,18 @@ kubectl wait --for=condition=Available deployment/envoy-gateway -n envoy-gateway
 
 It has to go in the `envoy-gateway-system` namespace, because the `EnvoyProxy` config in `hack/gateway.yaml` lives there.
 
-### 3. Create the Gateway
+### Create the Gateway
 
 ```sh
 kubectl apply -f hack/gateway.yaml
 kubectl wait --for=condition=Programmed gateway/ephemera -n ephemera-system --timeout=120s
 ```
 
-### 4. Deploy the test app
+### Deploy the test app and hit it
 
 ```sh
 kubectl apply -f hack/hello-world.yaml
 kubectl rollout status deployment/whoami -n hello
-```
-
-### 5. Hit it
-
-```sh
 curl http://hello.127.0.0.1.nip.io
 ```
 
@@ -115,12 +184,6 @@ curl hello.127.0.0.1.nip.io
   -> Pod
 ```
 
-### Clean up
-
-```sh
-kind delete cluster --name ephemera
-```
-
 ## Things I learned the hard way
 
 **A Gateway can be accepted and still not work.** My Gateway sat at `Programmed=False` because Envoy Gateway creates its proxy Service as a `LoadBalancer` by default. kind has no load balancer provider, so that Service never gets an address. I switched it to a NodePort on 30080 to line up with the port mapping in the kind config.
@@ -129,18 +192,23 @@ kind delete cluster --name ephemera
 
 **What you apply isn't always what you get back.** `kubectl get httproute -o yaml` shows more than `hack/hello-world.yaml` contains, because `matches` defaults to `PathPrefix /` and `backendRefs` defaults to weight 1. Don't expect the two to match. That's worth remembering for the reconciler too, since a naive comparison against the live object would always see a difference.
 
+**A ready pod isn't reachable right away.** The operator started garak as soon as the model's Deployment reported a ready pod. The first full run worked, and the second failed with `Failed to connect to Ollama`. Routing a Service to a new pod takes a moment to update after the pod turns ready, and garak happened to get there first. Now the garak Job has an init container that waits until the model answers through the Service, and three runs in a row passed after that.
+
+**Reads come from a cache.** The operator's client reads from a local cache of the cluster, so a Job it just created can come back as not found on the next line. That caused a `Job "garak" not found` error in the log. Kubernetes retried and it worked out, but now the operator just waits, since creating the Job triggers another reconcile anyway.
+
 ## Project layout
 
 | Path | What's in it |
 | --- | --- |
+| `api/v1alpha1/` | The `RedTeamRun` type |
+| `internal/controller/` | The `RedTeamRun` controller and its tests |
+| `images/target-model/` | Dockerfile for the target model: Ollama with `qwen2.5:0.5b` built in, so it runs offline |
+| `images/harness/` | Dockerfile for garak, plus `run.py`, which runs garak and hands its scores back to the operator |
+| `cmd/main.go` | Operator entry point. `--harness-image` sets the garak image |
+| `config/` | Kustomize manifests for the CRD, RBAC and a sample run (Kubebuilder scaffold) |
 | `hack/kind-config.yaml` | Local cluster and host port mappings |
 | `hack/gateway.yaml` | Namespace, EnvoyProxy config, GatewayClass and Gateway, from the preview design |
 | `hack/hello-world.yaml` | The manual routing smoke test, from the preview design |
-| `images/target-model/` | Dockerfile for the target model: Ollama with `qwen2.5:0.5b` built in, so it runs offline |
-| `api/v1alpha1/` | The `RedTeamRun` type (Kubebuilder scaffold) |
-| `internal/controller/` | The `RedTeamRun` controller, which creates the namespace and target model for each run |
-| `cmd/main.go` | Operator entry point (Kubebuilder scaffold) |
-| `config/` | Kustomize manifests for deploying the operator (Kubebuilder scaffold) |
 | `test/` | End-to-end test setup (Kubebuilder scaffold) |
 | `.github/workflows/` | Lint, test and e2e workflows (Kubebuilder scaffold) |
 
@@ -151,13 +219,15 @@ These come from the Kubebuilder Makefile and need a bash shell. Run `make help` 
 ```sh
 make build     # build the manager binary
 make lint      # run golangci-lint
-make test      # run unit tests
+make test      # run unit tests against a local API server
 make test-e2e  # run e2e tests in a throwaway kind cluster
 ```
 
+`make test` uses envtest, which runs a real API server but no controllers. So the tests check what the operator asks Kubernetes to create, and the garbage collection and pod behavior get checked on the kind cluster instead.
+
 ## Built with
 
-Go, [Kubebuilder](https://book.kubebuilder.io/), [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), [Envoy Gateway](https://gateway.envoyproxy.io/), the [Gateway API](https://gateway-api.sigs.k8s.io/), [Helm](https://helm.sh/) and [kind](https://kind.sigs.k8s.io/).
+Go, [Kubebuilder](https://book.kubebuilder.io/), [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), [garak](https://github.com/NVIDIA/garak), [Ollama](https://ollama.com/), [kind](https://kind.sigs.k8s.io/), and for the routing setup, [Envoy Gateway](https://gateway.envoyproxy.io/), the [Gateway API](https://gateway-api.sigs.k8s.io/) and [Helm](https://helm.sh/).
 
 ## Contributing
 

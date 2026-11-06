@@ -61,6 +61,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var harnessImage string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -82,6 +83,8 @@ func main() {
 	opts := zap.Options{
 		Development: true,
 	}
+	flag.StringVar(&harnessImage, "harness-image", "ephemera-harness:garak-0.17.1",
+		"The garak image red team runs use to attack the target model.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -179,8 +182,9 @@ func main() {
 	}
 
 	if err := (&controller.RedTeamRunReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		HarnessImage: harnessImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "redteamrun")
 		os.Exit(1)

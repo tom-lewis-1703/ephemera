@@ -40,8 +40,9 @@ var _ = Describe("RedTeamRun Controller", func() {
 		return &redteamv1alpha1.RedTeamRun{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec: redteamv1alpha1.RedTeamRunSpec{
-				TargetImage: "example.com/target-model:test",
-				Probes:      []string{"test.Blank"},
+				TargetImage: testTargetImage,
+				TargetModel: testTargetModel,
+				Probes:      []string{testProbe},
 			},
 		}
 	}
@@ -90,7 +91,7 @@ var _ = Describe("RedTeamRun Controller", func() {
 	It("rejects changes to the spec", func() {
 		run := createRun("immutable-spec")
 
-		run.Spec.Probes = []string{"test.Blank", "dan"}
+		run.Spec.Probes = []string{testProbe, "dan"}
 		Expect(k8sClient.Update(ctx, run)).To(MatchError(ContainSubstring("spec is immutable")))
 	})
 

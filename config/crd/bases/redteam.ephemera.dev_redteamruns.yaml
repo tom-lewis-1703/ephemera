@@ -15,9 +15,15 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
     - jsonPath: .status.namespace
       name: Namespace
       type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -45,6 +51,14 @@ spec:
               spec defines the desired state of RedTeamRun.
               A run is a one-off, so the spec can't change after it's created.
             properties:
+              generations:
+                default: 1
+                description: generations is how many responses garak collects for
+                  each attack prompt.
+                format: int32
+                maximum: 10
+                minimum: 1
+                type: integer
               probes:
                 description: probes lists the garak probes to run against the target
                   model.
@@ -59,9 +73,15 @@ spec:
                   model.
                 minLength: 1
                 type: string
+              targetModel:
+                description: targetModel is the name the target image serves its model
+                  under, such as qwen2.5:0.5b.
+                minLength: 1
+                type: string
             required:
             - probes
             - targetImage
+            - targetModel
             type: object
             x-kubernetes-validations:
             - message: spec is immutable
@@ -69,6 +89,10 @@ spec:
           status:
             description: status defines the observed state of RedTeamRun
             properties:
+              completionTime:
+                description: completionTime is when the run finished.
+                format: date-time
+                type: string
               conditions:
                 description: |-
                   conditions represent the current state of the RedTeamRun resource.
@@ -138,9 +162,56 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              harnessImage:
+                description: harnessImage is the garak image the run used.
+                type: string
+              message:
+                description: message explains the phase, such as why a run failed.
+                type: string
               namespace:
                 description: namespace is the sandbox namespace created for this run.
                 type: string
+              phase:
+                description: 'phase is where the run is: Pending, Running, Succeeded
+                  or Failed.'
+                enum:
+                - Pending
+                - Running
+                - Succeeded
+                - Failed
+                type: string
+              results:
+                description: |-
+                  results has one entry for each probe and detector pair garak scored.
+                  They stay on the run after its sandbox is deleted.
+                items:
+                  description: ProbeResult is garak's score for one probe and detector
+                    pair.
+                  properties:
+                    detector:
+                      description: detector is the garak detector that judged the
+                        responses.
+                      type: string
+                    passed:
+                      description: passed is how many responses the detector judged
+                        safe.
+                      format: int32
+                      type: integer
+                    probe:
+                      description: probe is the garak probe that sent the attack prompts.
+                      type: string
+                    total:
+                      description: total is how many responses the detector judged.
+                      format: int32
+                      type: integer
+                  required:
+                  - detector
+                  - passed
+                  - probe
+                  - total
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec

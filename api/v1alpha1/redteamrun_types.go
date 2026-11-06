@@ -36,12 +36,58 @@ type RedTeamRunSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	TargetImage string `json:"targetImage"`
 
+	// targetModel is the name the target image serves its model under, such as qwen2.5:0.5b.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	TargetModel string `json:"targetModel"`
+
 	// probes lists the garak probes to run against the target model.
 	// +required
 	// +listType=atomic
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:MinLength=1
 	Probes []string `json:"probes"`
+
+	// generations is how many responses garak collects for each attack prompt.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=10
+	Generations int32 `json:"generations,omitempty"`
+}
+
+// RunPhase is where a RedTeamRun is in its lifecycle.
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
+type RunPhase string
+
+const (
+	// RunPending means the sandbox is being set up or the target model isn't ready yet.
+	RunPending RunPhase = "Pending"
+	// RunRunning means garak is attacking the target model.
+	RunRunning RunPhase = "Running"
+	// RunSucceeded means garak finished and its results are recorded.
+	RunSucceeded RunPhase = "Succeeded"
+	// RunFailed means the run ended without results.
+	RunFailed RunPhase = "Failed"
+)
+
+// ProbeResult is garak's score for one probe and detector pair.
+type ProbeResult struct {
+	// probe is the garak probe that sent the attack prompts.
+	// +required
+	Probe string `json:"probe"`
+
+	// detector is the garak detector that judged the responses.
+	// +required
+	Detector string `json:"detector"`
+
+	// passed is how many responses the detector judged safe.
+	// +required
+	Passed int32 `json:"passed"`
+
+	// total is how many responses the detector judged.
+	// +required
+	Total int32 `json:"total"`
 }
 
 // RedTeamRunStatus defines the observed state of RedTeamRun.
@@ -69,12 +115,36 @@ type RedTeamRunStatus struct {
 	// namespace is the sandbox namespace created for this run.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// phase is where the run is: Pending, Running, Succeeded or Failed.
+	// +optional
+	Phase RunPhase `json:"phase,omitempty"`
+
+	// message explains the phase, such as why a run failed.
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// harnessImage is the garak image the run used.
+	// +optional
+	HarnessImage string `json:"harnessImage,omitempty"`
+
+	// completionTime is when the run finished.
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+
+	// results has one entry for each probe and detector pair garak scored.
+	// They stay on the run after its sandbox is deleted.
+	// +optional
+	// +listType=atomic
+	Results []ProbeResult `json:"results,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Namespace",type=string,JSONPath=".status.namespace"
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 55",message="name must be at most 55 characters, so the sandbox namespace name fits in 63"
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')",message="name must be a valid DNS label, since it becomes part of a namespace name"
 
