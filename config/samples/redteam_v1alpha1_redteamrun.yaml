@@ -6,4 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: redteamrun-sample
 spec:
-  # TODO(user): Add fields here
+  # Placeholder until the first runnable target image is chosen.
+  targetImage: example.com/target-model:latest
+  probes:
+    - promptinject

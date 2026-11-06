@@ -37,13 +37,31 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of RedTeamRun
+            description: |-
+              spec defines the desired state of RedTeamRun.
+              A run is a one-off, so the spec can't change after it's created.
             properties:
-              foo:
-                description: foo is an example field of RedTeamRun. Edit redteamrun_types.go
-                  to remove/update
+              probes:
+                description: probes lists the garak probes to run against the target
+                  model.
+                items:
+                  minLength: 1
+                  type: string
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+              targetImage:
+                description: targetImage is the container image that serves the target
+                  model.
+                minLength: 1
                 type: string
+            required:
+            - probes
+            - targetImage
             type: object
+            x-kubernetes-validations:
+            - message: spec is immutable
+              rule: self == oldSelf
           status:
             description: status defines the observed state of RedTeamRun
             properties:

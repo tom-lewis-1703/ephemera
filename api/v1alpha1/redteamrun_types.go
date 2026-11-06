@@ -31,9 +31,17 @@ type RedTeamRunSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// foo is an example field of RedTeamRun. Edit redteamrun_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// targetImage is the container image that serves the target model.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	TargetImage string `json:"targetImage"`
+
+	// probes lists the garak probes to run against the target model.
+	// +required
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:MinLength=1
+	Probes []string `json:"probes"`
 }
 
 // RedTeamRunStatus defines the observed state of RedTeamRun.
@@ -71,8 +79,10 @@ type RedTeamRun struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of RedTeamRun
+	// spec defines the desired state of RedTeamRun.
+	// A run is a one-off, so the spec can't change after it's created.
 	// +required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec is immutable"
 	Spec RedTeamRunSpec `json:"spec"`
 
 	// status defines the observed state of RedTeamRun

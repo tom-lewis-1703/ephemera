@@ -54,7 +54,10 @@ var _ = Describe("RedTeamRun Controller", func() {
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: redteamv1alpha1.RedTeamRunSpec{
+						TargetImage: "example.com/target-model:test",
+						Probes:      []string{"test.Blank"},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -82,6 +85,16 @@ var _ = Describe("RedTeamRun Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		})
+
+		It("should reject changes to the spec", func() {
+			resource := &redteamv1alpha1.RedTeamRun{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+
+			resource.Spec.Probes = []string{"test.Blank", "dan"}
+			err := k8sClient.Update(ctx, resource)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec is immutable"))
 		})
 	})
 })

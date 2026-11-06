@@ -38,7 +38,7 @@ This came from the preview environment design and is the only part that runs tod
 
 **Phase 1: write the operator. In progress.**
 
-- Add a custom resource: generated as `RedTeamRun`, replacing the old `PreviewEnvironment`, but it has no real fields yet
+- Add a custom resource: done, as `RedTeamRun`, with a target image and a list of garak probes. The spec can't change after a run is created
 - Have the reconciler create the sandbox, run garak, save the report and clean up: not started
 
 **After that:**
