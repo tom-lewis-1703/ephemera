@@ -7,8 +7,9 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
     && pip install --no-cache-dir garak==0.17.1
 
 # Run as a normal user. garak writes its reports under this user's home directory.
-RUN useradd --create-home garak
-USER garak
+# The numeric ID lets Kubernetes check that the user isn't root.
+RUN useradd --create-home --uid 1000 garak
+USER 1000
 WORKDIR /home/garak
 
 # run.py runs garak and hands its scores back to the operator.

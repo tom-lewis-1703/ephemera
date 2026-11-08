@@ -1,6 +1,11 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: ephemera
+networking:
+  # kind's built-in network plugin doesn't enforce NetworkPolicies, so the
+  # cluster uses Calico instead. Calico's default pod range is 192.168.0.0/16.
+  disableDefaultCNI: true
+  podSubnet: 192.168.0.0/16
 nodes:
   - role: control-plane
     extraPortMappings:

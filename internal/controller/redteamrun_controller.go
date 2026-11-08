@@ -26,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,13 +45,21 @@ const (
 	sandboxPrefix = "redteam-"
 	// runLabel marks a sandbox namespace with the name of the run it belongs to.
 	runLabel = "ephemera.dev/redteam-run"
+	// keepSandboxAnnotation set to "true" on a run keeps its sandbox after the
+	// run finishes, for debugging and escape testing. Deleting the run still
+	// deletes the sandbox.
+	keepSandboxAnnotation = "ephemera.dev/keep-sandbox"
 	// targetName names the target model's Deployment and Service, so the
 	// harness can reach the model at http://target:11434.
 	targetName = "target"
+	// appLabel is the pod label that Services and network policies select on.
+	appLabel = "app"
 	// targetPort is the port Ollama serves on.
 	targetPort int32 = 11434
 	// harnessName names the Job that runs garak.
 	harnessName = "garak"
+	// sandboxUser is the non-root user ID both images run as.
+	sandboxUser int64 = 1000
 	// runTimeoutSeconds stops a garak Job that runs longer than an hour.
 	runTimeoutSeconds int64 = 3600
 	// waitForTarget polls the target model through its Service until it answers.
@@ -80,6 +89,7 @@ type RedTeamRunReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create
 
 // Reconcile moves a RedTeamRun through its lifecycle: set up the sandbox,
 // wait for the target model, run garak, record the results on the run and
@@ -101,6 +111,13 @@ func (r *RedTeamRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	nsName := sandboxNamespace(&run)
 	if err := r.ensureNamespace(ctx, &run, nsName); err != nil {
 		return ctrl.Result{}, err
+	}
+	// The network policies go in before anything that runs, so no pod in the
+	// sandbox ever runs without them.
+	for _, policy := range sandboxPolicies(nsName) {
+		if err := r.createIfMissing(ctx, &run, policy); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	if err := r.createIfMissing(ctx, &run, targetDeployment(&run, nsName)); err != nil {
 		return ctrl.Result{}, err
@@ -181,8 +198,13 @@ func (r *RedTeamRunReconciler) ensureNamespace(ctx context.Context, run *redteam
 	case apierrors.IsNotFound(err):
 		ns = corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   name,
-				Labels: map[string]string{runLabel: run.Name},
+				Name: name,
+				Labels: map[string]string{
+					runLabel: run.Name,
+					// The API server rejects any pod in the sandbox that runs as root,
+					// adds Linux capabilities or skips the default seccomp profile.
+					"pod-security.kubernetes.io/enforce": "restricted",
+				},
 			},
 		}
 		if err := controllerutil.SetControllerReference(run, &ns, r.Scheme); err != nil {
@@ -205,6 +227,9 @@ func (r *RedTeamRunReconciler) ensureNamespace(ctx context.Context, run *redteam
 // deleteSandbox deletes a finished run's namespace. The results are already
 // on the run, so nothing in the sandbox is needed anymore.
 func (r *RedTeamRunReconciler) deleteSandbox(ctx context.Context, run *redteamv1alpha1.RedTeamRun) error {
+	if run.Annotations[keepSandboxAnnotation] == "true" {
+		return nil
+	}
 	var ns corev1.Namespace
 	err := r.Get(ctx, client.ObjectKey{Name: sandboxNamespace(run)}, &ns)
 	if err != nil {
@@ -334,7 +359,7 @@ func sandboxNamespace(run *redteamv1alpha1.RedTeamRun) string {
 
 // targetDeployment runs the target model from the run's image.
 func targetDeployment(run *redteamv1alpha1.RedTeamRun, namespace string) *appsv1.Deployment {
-	labels := map[string]string{"app": targetName}
+	labels := map[string]string{appLabel: targetName}
 	replicas := int32(1)
 	automountToken := false
 	return &appsv1.Deployment{
@@ -347,10 +372,12 @@ func targetDeployment(run *redteamv1alpha1.RedTeamRun, namespace string) *appsv1
 				Spec: corev1.PodSpec{
 					// The model has no reason to talk to the Kubernetes API.
 					AutomountServiceAccountToken: &automountToken,
+					SecurityContext:              sandboxPodSecurity(),
 					Containers: []corev1.Container{{
 						Name:            targetName,
 						Image:           run.Spec.TargetImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
+						SecurityContext: sandboxContainerSecurity(),
 						Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: targetPort}},
 						ReadinessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{
@@ -378,7 +405,7 @@ func targetService(namespace string) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: targetName, Namespace: namespace},
 		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": targetName},
+			Selector: map[string]string{appLabel: targetName},
 			Ports: []corev1.ServicePort{{
 				Name:       "http",
 				Port:       targetPort,
@@ -403,6 +430,7 @@ func harnessJob(run *redteamv1alpha1.RedTeamRun, namespace, image string) *batch
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
 					AutomountServiceAccountToken: &automountToken,
+					SecurityContext:              sandboxPodSecurity(),
 					// A ready pod isn't reachable through its Service right away, because
 					// routing to it takes a moment to update. Without this wait, garak's
 					// first request can fail to connect.
@@ -410,12 +438,14 @@ func harnessJob(run *redteamv1alpha1.RedTeamRun, namespace, image string) *batch
 						Name:            "wait-for-target",
 						Image:           image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
+						SecurityContext: sandboxContainerSecurity(),
 						Command:         []string{"python", "-c", waitForTarget},
 					}},
 					Containers: []corev1.Container{{
 						Name:            harnessName,
 						Image:           image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
+						SecurityContext: sandboxContainerSecurity(),
 						Args:            harnessArgs(run),
 						// Without a summary, the end of garak's log is the next best explanation.
 						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
@@ -448,6 +478,88 @@ func harnessArgs(run *redteamv1alpha1.RedTeamRun) []string {
 	}
 }
 
+// sandboxPodSecurity runs a sandbox pod as the non-root sandbox user, with
+// the container runtime's default seccomp profile limiting its system calls.
+func sandboxPodSecurity() *corev1.PodSecurityContext {
+	user := sandboxUser
+	nonRoot := true
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot:   &nonRoot,
+		RunAsUser:      &user,
+		RunAsGroup:     &user,
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
+// sandboxContainerSecurity drops every Linux capability and stops a process
+// from gaining more privileges than its parent.
+func sandboxContainerSecurity() *corev1.SecurityContext {
+	escalation := false
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &escalation,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+// sandboxPolicies are the network policies for a sandbox. All traffic in and
+// out of the sandbox is denied, except garak reaching the target model and
+// cluster DNS. The target model can't start any connections at all.
+func sandboxPolicies(namespace string) []client.Object {
+	tcp := corev1.ProtocolTCP
+	udp := corev1.ProtocolUDP
+	modelPort := intstr.FromInt32(targetPort)
+	dnsPort := intstr.FromInt32(53)
+	harness := metav1.LabelSelector{MatchLabels: map[string]string{batchv1.JobNameLabel: harnessName}}
+	target := metav1.LabelSelector{MatchLabels: map[string]string{appLabel: targetName}}
+	toModel := []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &modelPort}}
+
+	return []client.Object{
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "default-deny", Namespace: namespace},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{},
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+			},
+		},
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "harness-egress", Namespace: namespace},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: harness,
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+				Egress: []networkingv1.NetworkPolicyEgressRule{
+					{
+						To:    []networkingv1.NetworkPolicyPeer{{PodSelector: &target}},
+						Ports: toModel,
+					},
+					{
+						To: []networkingv1.NetworkPolicyPeer{{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{corev1.LabelMetadataName: "kube-system"},
+							},
+							PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
+						}},
+						Ports: []networkingv1.NetworkPolicyPort{
+							{Protocol: &udp, Port: &dnsPort},
+							{Protocol: &tcp, Port: &dnsPort},
+						},
+					},
+				},
+			},
+		},
+		&networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "target-ingress", Namespace: namespace},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: target,
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{{
+					From:  []networkingv1.NetworkPolicyPeer{{PodSelector: &harness}},
+					Ports: toModel,
+				}},
+			},
+		},
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager. Owning these types
 // means a change to any of a run's objects triggers a reconcile, such as the
 // target model becoming ready or the garak Job finishing.
@@ -458,6 +570,7 @@ func (r *RedTeamRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&batchv1.Job{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Named("redteamrun").
 		Complete(r)
 }

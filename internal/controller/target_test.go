@@ -52,7 +52,7 @@ var _ = Describe("RedTeamRun target model", func() {
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: run.Name}})
 		Expect(err).NotTo(HaveOccurred())
 
-		key := client.ObjectKey{Namespace: "redteam-starts-target", Name: "target"}
+		key := client.ObjectKey{Namespace: "redteam-starts-target", Name: targetName}
 
 		var deploy appsv1.Deployment
 		Expect(k8sClient.Get(ctx, key, &deploy)).To(Succeed())

@@ -2,7 +2,7 @@
 
 Give every AI red team run its own disposable Kubernetes sandbox. The run attacks the model, the results come out, and the sandbox gets deleted.
 
-The first version of that works on a local kind cluster. The sandbox isn't locked down yet, though, so read [Limitations](#limitations) before trusting it with anything.
+It works on a local kind cluster. Each sandbox denies all network traffic except garak reaching the model, and an [escape test](#escape-tests) blocked 17 of 17 attempts to get out, with no probe errors. Read [Limitations](#limitations) for what that does and doesn't cover.
 
 ## Why I'm building this
 
@@ -31,7 +31,7 @@ spec:
 
 garak is an open-source tool that sends attack prompts at a model, then uses detectors to judge whether each response gave in. The operator then:
 
-1. Creates a namespace called `redteam-<run name>`, owned by the run
+1. Creates a namespace called `redteam-<run name>`, owned by the run, and locks it down
 2. Starts the target model in it, behind a Service called `target`
 3. Waits for the model to be ready, then runs garak against `http://target:11434` as a Job
 4. Copies garak's scores onto the run's status
@@ -61,6 +61,8 @@ A few design choices behind that:
 - **Results come back through the termination message.** When garak finishes, a small wrapper script writes a summary of its scores to `/dev/termination-log`. Kubernetes copies that into the pod's status, where the operator reads it, so the operator doesn't need access to pod logs. If garak fails, the end of its log becomes the message instead, and that ends up in the run's status.
 - **A failed run stays failed.** The Job doesn't retry, since a second attempt would mix results from two runs.
 - **No pod gets a Kubernetes API token.** Neither the model nor garak has any reason to talk to the cluster.
+- **The network is denied by default.** Each sandbox gets three NetworkPolicies. One denies all traffic in and out, and two make exceptions: garak can reach the model on port 11434 and cluster DNS, and the model accepts connections only from garak. The model can't start any connections at all. The policies are created before anything runs in the sandbox, so no pod ever runs without them.
+- **Pods can't run as root.** The namespace enforces the [restricted Pod Security level](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted), so the API server rejects any pod that runs as root, adds Linux capabilities or skips the default seccomp profile. Both images run as user 1000.
 
 ## Status
 
@@ -68,15 +70,18 @@ A few design choices behind that:
 
 **Phase 1: a working operator. Done.** Runs go from creation to results to cleanup on a kind cluster, using `qwen2.5:0.5b` on a CPU.
 
+**Phase 2: lock down the sandbox. Done.** Network policies, the restricted Pod Security level and an escape test that checks both hold.
+
 **Next:**
 
-- Lock down the sandbox with network rules, and write tests that try to break out of it
 - Test AI agents using fake tools and fake credentials
 - Trigger runs from pull requests
 
 ## Limitations
 
-- **The sandbox isn't isolated yet.** There are no network policies, so pods in the sandbox can reach the internet and other namespaces. That's the next thing I'm working on.
+- **DNS is still open to garak.** garak needs cluster DNS to find the model, and cluster DNS forwards outside lookups. So garak can't connect anywhere else, but it could still leak data out through DNS queries.
+- **The metadata check proves less than it looks.** kind has no cloud metadata service, so `169.254.169.254` would be unreachable even without the policies. It's in the escape test for when this runs on a cloud cluster.
+- **It's only been tested on kind with Calico.** The policies depend on a network plugin that enforces them, and kind's default plugin doesn't.
 - **Model output varies between runs.** Three runs of the same sample scored `goodside.WhoIsRiley` at 3/6, 6/6 and 4/6. Pinned images make the setup repeatable, but not the answers, so the results should be read as rates across many prompts and generations.
 - **Only the score summary is kept.** garak's full report is deleted with the sandbox. The summary also has to fit in Kubernetes' 4096-byte termination message limit, which is roughly 30 probe and detector pairs. A run with more fails with a message saying so.
 - **The operator has only run locally**, through `make run`. I haven't deployed it into the cluster yet.
@@ -101,7 +106,11 @@ The versions in parentheses are what I'm running.
 
 ```sh
 kind create cluster --config hack/kind-config.yaml
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manifests/calico.yaml
+kubectl rollout status daemonset/calico-node -n kube-system --timeout=5m
 ```
+
+The kind config turns off kind's default network plugin, and Calico replaces it. Calico enforces NetworkPolicies, which the sandbox lockdown depends on.
 
 ### 2. Build the images and load them into kind
 
@@ -142,9 +151,33 @@ kubectl delete redteamrun redteamrun-sample
 kind delete cluster --name ephemera
 ```
 
+## Escape tests
+
+`hack/escape-test.sh` tries to break out of a sandbox. With the operator running, it starts two runs that keep their sandboxes (the `ephemera.dev/keep-sandbox: "true"` annotation), plus a decoy service outside any sandbox. Then it connects from inside the first sandbox in three ways:
+
+- **From a pod with garak's labels**, standing in for a compromised harness
+- **From the target model's own pod**, standing in for a compromised model
+- **From an unlabeled pod**, standing in for anything else that ends up in the sandbox
+
+```sh
+hack/escape-test.sh
+```
+
+It tries the internet, the Kubernetes API, the kubelet, the cloud metadata address, the other run's model and the decoy, and checks that a pod outside the sandbox can't reach the model. It also tries to start a privileged root pod in the sandbox.
+
+Each connection ends up as `open`, `closed` (it timed out or the network was unreachable, which is what a policy drop looks like), `refused` (something answered, so the packet got through) or `error` (the probe itself failed). Only `closed` counts as blocked, and a privileged pod only counts as blocked if Pod Security is what rejected it. Controls check that each probe works and can tell a refusal from a drop: garak reaches its own model, the model reaches itself, and a pod outside the sandbox reaches the decoy and gets refused on a port nothing listens on.
+
+Before the lockdown, only 1 of the 16 escape attempts was blocked, and that was the metadata address, which kind doesn't have. After it:
+
+```text
+blocked 17 of 17 escape attempts, 22 of 22 checks as expected, 0 probe errors
+```
+
+The script exits nonzero if any check doesn't match, including any probe error. To check that, I ran a copy with four failures planted: a missing pod, a missing shell, a refusal where a block was expected, and a bad `kubectl run` flag. All four showed up as failures, and it reported 9 of 17 blocked instead of 17.
+
 ## Routing setup from the preview design
 
-Before the switch to red teaming, Phase 0 proved that a request could reach a preview app through a shared Gateway at its own hostname. The operator doesn't use any of this, but it still works. It needs the cluster from step 1 above, plus [Helm](https://helm.sh/docs/intro/install/) (v4.2.3).
+Before the switch to red teaming, Phase 0 proved that a request could reach a preview app through a shared Gateway at its own hostname. The operator doesn't use any of this, and I haven't rechecked it since the cluster switched to Calico. It needs the cluster from step 1 above, plus [Helm](https://helm.sh/docs/intro/install/) (v4.2.3).
 
 ### Install Envoy Gateway
 
@@ -194,6 +227,8 @@ curl hello.127.0.0.1.nip.io
 
 **A ready pod isn't reachable right away.** The operator started garak as soon as the model's Deployment reported a ready pod. The first full run worked, and the second failed with `Failed to connect to Ollama`. Routing a Service to a new pod takes a moment to update after the pod turns ready, and garak happened to get there first. Now the garak Job has an init container that waits until the model answers through the Service, and three runs in a row passed after that.
 
+**A NetworkPolicy can exist and block nothing.** The cluster ran kind's default network plugin, kindnet, which doesn't enforce NetworkPolicies. I applied a policy denying all traffic, and a pod could still reach the internet. Kubernetes accepts the policy either way, so nothing warns you. I rebuilt the cluster with Calico, and the same check timed out. That's why the escape test checks real connections instead of whether the policies exist.
+
 **Reads come from a cache.** The operator's client reads from a local cache of the cluster, so a Job it just created can come back as not found on the next line. That caused a `Job "garak" not found` error in the log. Kubernetes retried and it worked out, but now the operator just waits, since creating the Job triggers another reconcile anyway.
 
 ## Project layout
@@ -206,7 +241,8 @@ curl hello.127.0.0.1.nip.io
 | `images/harness/` | Dockerfile for garak, plus `run.py`, which runs garak and hands its scores back to the operator |
 | `cmd/main.go` | Operator entry point. `--harness-image` sets the garak image |
 | `config/` | Kustomize manifests for the CRD, RBAC and a sample run (Kubebuilder scaffold) |
-| `hack/kind-config.yaml` | Local cluster and host port mappings |
+| `hack/escape-test.sh` | Tries to break out of a sandbox and checks the lockdown holds |
+| `hack/kind-config.yaml` | Local cluster, with kind's default network plugin off so Calico can replace it |
 | `hack/gateway.yaml` | Namespace, EnvoyProxy config, GatewayClass and Gateway, from the preview design |
 | `hack/hello-world.yaml` | The manual routing smoke test, from the preview design |
 | `test/` | End-to-end test setup (Kubebuilder scaffold) |
@@ -227,7 +263,7 @@ make test-e2e  # run e2e tests in a throwaway kind cluster
 
 ## Built with
 
-Go, [Kubebuilder](https://book.kubebuilder.io/), [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), [garak](https://github.com/NVIDIA/garak), [Ollama](https://ollama.com/), [kind](https://kind.sigs.k8s.io/), and for the routing setup, [Envoy Gateway](https://gateway.envoyproxy.io/), the [Gateway API](https://gateway-api.sigs.k8s.io/) and [Helm](https://helm.sh/).
+Go, [Kubebuilder](https://book.kubebuilder.io/), [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), [garak](https://github.com/NVIDIA/garak), [Ollama](https://ollama.com/), [kind](https://kind.sigs.k8s.io/), [Calico](https://www.tigera.io/project-calico/), and for the routing setup, [Envoy Gateway](https://gateway.envoyproxy.io/), the [Gateway API](https://gateway-api.sigs.k8s.io/) and [Helm](https://helm.sh/).
 
 ## Contributing
 

@@ -75,7 +75,7 @@ var _ = Describe("RedTeamRun harness", func() {
 
 		By("marking the target model ready")
 		var deploy appsv1.Deployment
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: "target"}, &deploy)).To(Succeed())
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: targetName}, &deploy)).To(Succeed())
 		deploy.Status.Replicas = 1
 		deploy.Status.UpdatedReplicas = 1
 		deploy.Status.ReadyReplicas = 1
