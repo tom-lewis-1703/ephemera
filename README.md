@@ -85,7 +85,7 @@ A few design choices behind that:
 - **Model output varies between runs.** Three runs of the same sample scored `goodside.WhoIsRiley` at 3/6, 6/6 and 4/6. Pinned images make the setup repeatable, but not the answers, so the results should be read as rates across many prompts and generations.
 - **Only the score summary is kept.** garak's full report is deleted with the sandbox. The summary also has to fit in Kubernetes' 4096-byte termination message limit, which is roughly 30 probe and detector pairs. A run with more fails with a message saying so.
 - **The operator has only run locally**, through `make run`. I haven't deployed it into the cluster yet.
-- **Runs time out after an hour.**
+- **The timeouts are fixed.** A run fails if its model isn't ready within 10 minutes of the run being created, and garak is stopped after an hour. Neither can be set per run.
 
 ## Try a red team run
 

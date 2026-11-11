@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -60,6 +61,9 @@ const (
 	harnessName = "garak"
 	// sandboxUser is the non-root user ID both images run as.
 	sandboxUser int64 = 1000
+	// targetReadyTimeout is how long a run waits for its target model to be
+	// ready, counted from when the run was created.
+	targetReadyTimeout = 10 * time.Minute
 	// runTimeoutSeconds stops a garak Job that runs longer than an hour.
 	runTimeoutSeconds int64 = 3600
 	// waitForTarget polls the target model through its Service until it answers.
@@ -79,6 +83,9 @@ type RedTeamRunReconciler struct {
 	Scheme *runtime.Scheme
 	// HarnessImage is the garak image each run's Job uses.
 	HarnessImage string
+	// TargetTimeout is how long a run waits for its target model to be ready.
+	// Zero means targetReadyTimeout.
+	TargetTimeout time.Duration
 }
 
 // +kubebuilder:rbac:groups=redteam.ephemera.dev,resources=redteamruns,verbs=get;list;watch;create;update;patch;delete
@@ -138,8 +145,26 @@ func (r *RedTeamRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	if !ready {
+		timeout := r.targetTimeout()
+		waited := time.Since(run.CreationTimestamp.Time)
+		if waited >= timeout {
+			// A model that never starts, such as one with a bad image name, would
+			// otherwise leave the run in Pending and its sandbox running forever.
+			reason, err := r.targetWaitingReason(ctx, nsName)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			finish(status, redteamv1alpha1.RunFailed,
+				fmt.Sprintf("the target model wasn't ready after %s%s", timeout, reason))
+			if err := r.updateStatus(ctx, &run, status); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, r.deleteSandbox(ctx, &run)
+		}
 		status.Message = "Waiting for the target model to be ready"
-		return ctrl.Result{}, r.updateStatus(ctx, &run, status)
+		// Nothing in the sandbox changes when the deadline passes, so ask to be
+		// called again then. The model becoming ready still triggers a reconcile sooner.
+		return ctrl.Result{RequeueAfter: timeout - waited}, r.updateStatus(ctx, &run, status)
 	}
 
 	// Garak only starts once the model answers, so its first attacks don't fail.
@@ -264,6 +289,32 @@ func (r *RedTeamRunReconciler) targetReady(ctx context.Context, namespace string
 		return false, client.IgnoreNotFound(err)
 	}
 	return deploy.Status.AvailableReplicas > 0, nil
+}
+
+// targetTimeout is how long a run waits for its target model to be ready.
+func (r *RedTeamRunReconciler) targetTimeout() time.Duration {
+	if r.TargetTimeout > 0 {
+		return r.TargetTimeout
+	}
+	return targetReadyTimeout
+}
+
+// targetWaitingReason says why the target model's container hasn't started,
+// such as ": ImagePullBackOff: ...", or returns "" if Kubernetes gave no reason.
+func (r *RedTeamRunReconciler) targetWaitingReason(ctx context.Context, namespace string) (string, error) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(namespace),
+		client.MatchingLabels{appLabel: targetName}); err != nil {
+		return "", err
+	}
+	for _, pod := range pods.Items {
+		for _, cs := range pod.Status.ContainerStatuses {
+			if w := cs.State.Waiting; w != nil && w.Reason != "" {
+				return strings.TrimSuffix(fmt.Sprintf(": %s: %s", w.Reason, w.Message), ": "), nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // harnessMessage returns the termination message of the garak Job's pod.

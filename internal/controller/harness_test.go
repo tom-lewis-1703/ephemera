@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -98,6 +99,27 @@ var _ = Describe("RedTeamRun harness", func() {
 			"--probes", "dan.Dan_11_0,promptinject",
 			"--generations", "1",
 		}))
+	})
+
+	It("fails a run whose target model never becomes ready", func() {
+		run := createRun("target-never-ready")
+		// A timeout this short has always passed by the time the run is reconciled.
+		r := &RedTeamRunReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), TargetTimeout: time.Nanosecond}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: run.Name}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(run), run)).To(Succeed())
+
+		Expect(run.Status.Phase).To(Equal(redteamv1alpha1.RunFailed))
+		Expect(run.Status.Message).To(ContainSubstring("wasn't ready after"))
+		Expect(run.Status.CompletionTime).NotTo(BeNil())
+
+		By("deleting the sandbox and never starting garak")
+		var ns corev1.Namespace
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "redteam-target-never-ready"}, &ns)).To(Succeed())
+		Expect(ns.DeletionTimestamp).NotTo(BeNil())
+		var job batchv1.Job
+		err = k8sClient.Get(ctx, client.ObjectKey{Namespace: ns.Name, Name: harnessName}, &job)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
 	It("deletes the sandbox once the run is finished", func() {
