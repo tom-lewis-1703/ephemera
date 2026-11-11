@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +45,12 @@ const metricsServiceName = "ephemera-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "ephemera-metrics-binding"
+
+// runName is the RedTeamRun the e2e test creates, and runNamespace is its sandbox.
+const (
+	runName      = "e2e-run"
+	runNamespace = "redteam-" + runName
+)
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -72,6 +79,14 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("pointing the controller-manager at the stand-in harness image")
+		cmd = exec.Command("kubectl", "patch", "deployment", "ephemera-controller-manager", "-n", namespace,
+			"--type=json", "-p", fmt.Sprintf(
+				`[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--harness-image=%s"}]`,
+				harnessImage))
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to set the harness image")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -79,6 +94,10 @@ var _ = Describe("Manager", Ordered, func() {
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
+		_, _ = utils.Run(cmd)
+
+		By("deleting the red team run")
+		cmd = exec.Command("kubectl", "delete", "redteamrun", runName, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
@@ -270,15 +289,49 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		// This runs against real Kubernetes controllers, so it covers what the
+		// envtest tests can't: pods starting under the restricted Pod Security
+		// level, the Job finishing, the operator's own RBAC and the sandbox
+		// actually being deleted.
+		It("should take a RedTeamRun from creation to results to cleanup", func() {
+			By("creating a run")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(fmt.Sprintf("apiVersion: redteam.ephemera.dev/v1alpha1\nkind: RedTeamRun\nmetadata:\n  name: %s\nspec:\n  targetImage: %s\n  targetModel: stub\n  probes:\n    - e2e.Stub\n", runName, targetImage))
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the run")
+
+			By("waiting for the run to succeed")
+			verifyRunSucceeded := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "redteamrun", runName,
+					"-o", "jsonpath={.status.phase}: {.status.message}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(HavePrefix("Succeeded"))
+			}
+			Eventually(verifyRunSucceeded, 3*time.Minute).Should(Succeed())
+
+			By("checking the harness results were copied onto the run")
+			cmd = exec.Command("kubectl", "get", "redteamrun", runName, "-o",
+				"jsonpath={range .status.results[*]}{.probe} {.detector} {.passed}/{.total}{end}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("e2e.Stub e2e.Reached 1/1"))
+
+			By("waiting for the sandbox namespace to be gone")
+			verifySandboxGone := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "namespace", runNamespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred(), "the sandbox namespace still exists: %s", output)
+				g.Expect(err.Error()).To(ContainSubstring("NotFound"))
+			}
+			Eventually(verifySandboxGone, 3*time.Minute).Should(Succeed())
+
+			By("checking the results outlived the sandbox")
+			cmd = exec.Command("kubectl", "get", "redteamrun", runName, "-o", "jsonpath={.status.phase}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("Succeeded"))
+		})
 	})
 })
 

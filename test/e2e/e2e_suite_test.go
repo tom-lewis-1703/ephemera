@@ -34,6 +34,11 @@ import (
 var (
 	// managerImage is the manager image to be built and loaded for testing.
 	managerImage = "example.com/ephemera:v0.0.1"
+	// targetImage and harnessImage are small stand-ins for the target model
+	// and garak. The real images are several GB and take minutes to attack a
+	// model, and the e2e tests are about the operator, not about garak.
+	targetImage  = "example.com/ephemera-target:e2e"
+	harnessImage = "example.com/ephemera-harness:e2e"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -61,6 +66,17 @@ var _ = BeforeSuite(func() {
 	By("loading the manager image on Kind")
 	err = utils.LoadImageToKindClusterWithName(managerImage)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+
+	By("building and loading the stand-in target and harness images")
+	for image, dir := range map[string]string{
+		targetImage:  "test/e2e/images/target",
+		harnessImage: "test/e2e/images/harness",
+	} {
+		_, err = utils.Run(exec.Command("docker", "build", "-t", image, dir))
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build "+image)
+		err = utils.LoadImageToKindClusterWithName(image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load "+image+" into Kind")
+	}
 
 	configureKubectlKubeRC()
 	setupCertManager()

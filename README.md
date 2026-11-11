@@ -249,7 +249,7 @@ curl hello.127.0.0.1.nip.io
 | `hack/kind-config.yaml` | Local cluster, with kind's default network plugin off so Calico can replace it |
 | `hack/gateway.yaml` | Namespace, EnvoyProxy config, GatewayClass and Gateway, from the preview design |
 | `hack/hello-world.yaml` | The manual routing smoke test, from the preview design |
-| `test/` | End-to-end test setup (Kubebuilder scaffold) |
+| `test/e2e/` | End-to-end tests, plus small stand-in images for the model and garak |
 | `.github/workflows/` | Lint, test and e2e workflows (Kubebuilder scaffold) |
 
 ## Development
@@ -263,7 +263,9 @@ make test      # run unit tests against a local API server
 make test-e2e  # run e2e tests in a throwaway kind cluster
 ```
 
-`make test` uses envtest, which runs a real API server but no controllers. So the tests check what the operator asks Kubernetes to create, and the garbage collection and pod behavior get checked on the kind cluster instead.
+`make test` uses envtest, which runs a real API server but no controllers. So those tests check what the operator asks Kubernetes to create.
+
+`make test-e2e` covers the rest. It deploys the operator into a throwaway kind cluster and takes a run from creation to results to a deleted sandbox, under the operator's own RBAC. To keep it to about two minutes, it uses stand-in images from `test/e2e/images/` instead of the real model and garak. The stand-in harness makes one request to the stand-in model, then reports a fixed score the same way the real one does. So the e2e test checks the operator, not garak, and it doesn't check the network policies, because that cluster doesn't have Calico. The [escape test](#escape-tests) covers those and is still run by hand.
 
 ## Built with
 
