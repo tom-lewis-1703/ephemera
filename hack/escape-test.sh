@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tries to break out of a red team sandbox, and checks the paths a run needs
-# still work. Needs the operator running (make run) and both images loaded.
+# still work. Needs the operator running (deployed or make run) and both images loaded.
 #
 # It starts two runs that keep their sandboxes, plus a decoy service outside
 # any sandbox, then connects from inside sandbox A as:

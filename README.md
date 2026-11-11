@@ -84,7 +84,7 @@ A few design choices behind that:
 - **It's only been tested on kind with Calico.** The policies depend on a network plugin that enforces them, and kind's default plugin doesn't.
 - **Model output varies between runs.** Three runs of the same sample scored `goodside.WhoIsRiley` at 3/6, 6/6 and 4/6. Pinned images make the setup repeatable, but not the answers, so the results should be read as rates across many prompts and generations.
 - **Only the score summary is kept.** garak's full report is deleted with the sandbox. The summary also has to fit in Kubernetes' 4096-byte termination message limit, which is roughly 30 probe and detector pairs. A run with more fails with a message saying so.
-- **The operator has only run locally**, through `make run`. I haven't deployed it into the cluster yet.
+- **The operator image isn't published.** It runs in the cluster as a Deployment, but only from an image built locally and loaded into kind.
 - **The timeouts are fixed.** A run fails if its model isn't ready within 10 minutes of the run being created, and garak is stopped after an hour. Neither can be set per run.
 
 ## Try a red team run
@@ -122,14 +122,18 @@ kind load docker-image ephemera-target:qwen2.5-0.5b ephemera-harness:garak-0.17.
 
 The first builds take a few minutes, since they download the model and garak's dependencies.
 
-### 3. Install the CRD and run the operator
+### 3. Deploy the operator
 
 ```sh
-make install
-make run
+make docker-build IMG=ephemera-operator:dev
+kind load docker-image ephemera-operator:dev --name ephemera
+make deploy IMG=ephemera-operator:dev
+kubectl rollout status deployment/ephemera-controller-manager -n ephemera-system --timeout=2m
 ```
 
-`make run` keeps running in the foreground, so use a second terminal for the next step.
+This installs the CRD and runs the operator as a Deployment in the `ephemera-system` namespace, with only the permissions in `config/rbac/role.yaml`.
+
+While developing, `make install` and `make run` run the operator on your machine instead, using your own kubectl permissions. `make run` stays in the foreground, so use a second terminal for the next step. Use one or the other, not both at once.
 
 ### 4. Start a run
 
