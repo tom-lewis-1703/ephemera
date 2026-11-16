@@ -64,8 +64,8 @@ EOF
   kubectl wait --for=condition=Ready pod/"$2" -n "$1" --timeout=120s >/dev/null || die "probe pod $1/$2 isn't ready"
 }
 
-# Runs in the probe pods. A name that doesn't resolve is an error rather than
-# closed, since every name checked here should resolve.
+# Runs in the probe pods. Every host checked here is an IP address, so a
+# failed name lookup is an error rather than closed.
 PY_CONNECT='
 import errno, socket, sys
 host, port = sys.argv[1], int(sys.argv[2])
@@ -85,6 +85,24 @@ except ConnectionRefusedError:
     print("refused")
 except OSError as e:
     print("closed" if e.errno in (errno.EHOSTUNREACH, errno.ENETUNREACH) else f"error:{e}")
+'
+
+# Runs in the probe pods. Sends one DNS query for example.com straight to a
+# DNS server over UDP. Any reply counts as open, even a failed lookup, since a
+# reply means the query got out.
+PY_DNS='
+import socket, sys
+query = bytes.fromhex("123401000001000000000000") + b"\x07example\x03com\x00" + bytes.fromhex("00010001")
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(3)
+try:
+    s.sendto(query, (sys.argv[1], 53))
+    s.recvfrom(512)
+    print("open")
+except TimeoutError:
+    print("closed")
+except OSError as e:
+    print(f"error:{e}")
 '
 
 # Runs in the target pod, which has bash but no Python.
@@ -115,6 +133,7 @@ probe() {
   esac
 }
 from_pod() { probe kubectl exec -n "$1" "$2" -- python -c "$PY_CONNECT" "$3" "$4"; }
+dns_from_pod() { probe kubectl exec -n "$1" "$2" -- python -c "$PY_DNS" "$3"; }
 from_target() { probe kubectl exec -n "$NS_A" deploy/target -- bash -c "$BASH_CONNECT" _ "$1" "$2"; }
 
 pass=0
@@ -161,22 +180,24 @@ TARGET_A=$(svc_ip "$NS_A" target)
 TARGET_B=$(svc_ip "$NS_B" target)
 DECOY=$(svc_ip "$DECOY_NS" decoy)
 API=$(svc_ip default kubernetes)
+DNS=$(svc_ip kube-system kube-dns)
 DECOY_POD=$(kubectl get pods -n "$DECOY_NS" -l app=decoy -o jsonpath='{.items[0].status.podIP}')
 NODE=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-for value in TARGET_A TARGET_B DECOY API DECOY_POD NODE; do
+for value in TARGET_A TARGET_B DECOY API DNS DECOY_POD NODE; do
   [[ -n ${!value} ]] || die "couldn't look up $value"
 done
 
 echo "== controls: the probes work and can tell refusals from drops"
-check open "$(from_pod "$NS_A" harness-probe target 11434)" "harness -> its own target model, by name"
-check open "$(from_pod "$NS_A" harness-probe "$TARGET_A" 11434)" "harness -> its own target model, by IP"
+check open "$(from_pod "$NS_A" harness-probe "$TARGET_A" 11434)" "harness -> its own target model"
 check open "$(from_target 127.0.0.1 11434)" "target -> itself"
 check open "$(from_pod "$DECOY_NS" decoy-probe "$DECOY" 11434)" "outside pod -> decoy, which has no policies"
 check refused "$(from_pod "$DECOY_NS" decoy-probe "$DECOY_POD" 9)" "outside pod -> decoy on a port nothing listens on"
+check open "$(dns_from_pod "$DECOY_NS" decoy-probe "$DNS")" "outside pod -> cluster DNS lookup"
 
 echo "== escape attempts from the harness"
 check closed "$(from_pod "$NS_A" harness-probe 1.1.1.1 443)" "harness -> internet (1.1.1.1:443)"
-check closed "$(from_pod "$NS_A" harness-probe example.com 443)" "harness -> internet by name (example.com:443)"
+check closed "$(dns_from_pod "$NS_A" harness-probe "$DNS")" "harness -> cluster DNS lookup (UDP 53)"
+check closed "$(from_pod "$NS_A" harness-probe "$DNS" 53)" "harness -> cluster DNS (TCP 53)"
 check closed "$(from_pod "$NS_A" harness-probe "$API" 443)" "harness -> Kubernetes API Service"
 check closed "$(from_pod "$NS_A" harness-probe "$NODE" 6443)" "harness -> Kubernetes API on the node"
 check closed "$(from_pod "$NS_A" harness-probe "$NODE" 10250)" "harness -> kubelet on the node"
@@ -186,6 +207,7 @@ check closed "$(from_pod "$NS_A" harness-probe "$DECOY" 11434)" "harness -> serv
 
 echo "== escape attempts from the target model"
 check closed "$(from_target 1.1.1.1 443)" "target -> internet (1.1.1.1:443)"
+check closed "$(from_target "$DNS" 53)" "target -> cluster DNS (TCP 53)"
 check closed "$(from_target "$API" 443)" "target -> Kubernetes API Service"
 check closed "$(from_target "$NODE" 10250)" "target -> kubelet on the node"
 check closed "$(from_target "$TARGET_B" 11434)" "target -> another run's target model"

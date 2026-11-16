@@ -50,8 +50,9 @@ const (
 	// run finishes, for debugging and escape testing. Deleting the run still
 	// deletes the sandbox.
 	keepSandboxAnnotation = "ephemera.dev/keep-sandbox"
-	// targetName names the target model's Deployment and Service, so the
-	// harness can reach the model at http://target:11434.
+	// targetName names the target model's Deployment and Service. It's also the
+	// hostname the harness reaches the model at, http://target:11434, through
+	// an entry in its pod's hosts file rather than a DNS lookup.
 	targetName = "target"
 	// appLabel is the pod label that Services and network policies select on.
 	appLabel = "app"
@@ -167,8 +168,17 @@ func (r *RedTeamRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: timeout - waited}, r.updateStatus(ctx, &run, status)
 	}
 
+	targetIP, err := r.targetIP(ctx, nsName)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if targetIP == "" {
+		// The Service showing up in the cache triggers another reconcile.
+		return ctrl.Result{}, r.updateStatus(ctx, &run, status)
+	}
+
 	// Garak only starts once the model answers, so its first attacks don't fail.
-	if err := r.createIfMissing(ctx, &run, harnessJob(&run, nsName, status.HarnessImage)); err != nil {
+	if err := r.createIfMissing(ctx, &run, harnessJob(&run, nsName, status.HarnessImage, targetIP)); err != nil {
 		return ctrl.Result{}, err
 	}
 	var job batchv1.Job
@@ -289,6 +299,16 @@ func (r *RedTeamRunReconciler) targetReady(ctx context.Context, namespace string
 		return false, client.IgnoreNotFound(err)
 	}
 	return deploy.Status.AvailableReplicas > 0, nil
+}
+
+// targetIP returns the cluster IP of the target model's Service, or "" if the
+// Service isn't in the cache yet.
+func (r *RedTeamRunReconciler) targetIP(ctx context.Context, namespace string) (string, error) {
+	var svc corev1.Service
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: targetName}, &svc); err != nil {
+		return "", client.IgnoreNotFound(err)
+	}
+	return svc.Spec.ClusterIP, nil
 }
 
 // targetTimeout is how long a run waits for its target model to be ready.
@@ -466,8 +486,9 @@ func targetService(namespace string) *corev1.Service {
 	}
 }
 
-// harnessJob runs garak once against the target model.
-func harnessJob(run *redteamv1alpha1.RedTeamRun, namespace, image string) *batchv1.Job {
+// harnessJob runs garak once against the target model, whose Service has the
+// given cluster IP.
+func harnessJob(run *redteamv1alpha1.RedTeamRun, namespace, image, targetIP string) *batchv1.Job {
 	// A retry would mix two attempts' results, so a failed run stays failed.
 	backoffLimit := int32(0)
 	timeout := runTimeoutSeconds
@@ -482,6 +503,10 @@ func harnessJob(run *redteamv1alpha1.RedTeamRun, namespace, image string) *batch
 					RestartPolicy:                corev1.RestartPolicyNever,
 					AutomountServiceAccountToken: &automountToken,
 					SecurityContext:              sandboxPodSecurity(),
+					// This puts the model's address in the pod's hosts file, so garak
+					// finds it without DNS. The sandbox can then block DNS, which
+					// would otherwise be a way to leak data out through lookups.
+					HostAliases: []corev1.HostAlias{{IP: targetIP, Hostnames: []string{targetName}}},
 					// A ready pod isn't reachable through its Service right away, because
 					// routing to it takes a moment to update. Without this wait, garak's
 					// first request can fail to connect.
@@ -553,13 +578,11 @@ func sandboxContainerSecurity() *corev1.SecurityContext {
 }
 
 // sandboxPolicies are the network policies for a sandbox. All traffic in and
-// out of the sandbox is denied, except garak reaching the target model and
-// cluster DNS. The target model can't start any connections at all.
+// out of the sandbox is denied, except garak reaching the target model. That
+// includes DNS. The target model can't start any connections at all.
 func sandboxPolicies(namespace string) []client.Object {
 	tcp := corev1.ProtocolTCP
-	udp := corev1.ProtocolUDP
 	modelPort := intstr.FromInt32(targetPort)
-	dnsPort := intstr.FromInt32(53)
 	harness := metav1.LabelSelector{MatchLabels: map[string]string{batchv1.JobNameLabel: harnessName}}
 	target := metav1.LabelSelector{MatchLabels: map[string]string{appLabel: targetName}}
 	toModel := []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &modelPort}}
@@ -577,24 +600,10 @@ func sandboxPolicies(namespace string) []client.Object {
 			Spec: networkingv1.NetworkPolicySpec{
 				PodSelector: harness,
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-				Egress: []networkingv1.NetworkPolicyEgressRule{
-					{
-						To:    []networkingv1.NetworkPolicyPeer{{PodSelector: &target}},
-						Ports: toModel,
-					},
-					{
-						To: []networkingv1.NetworkPolicyPeer{{
-							NamespaceSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{corev1.LabelMetadataName: "kube-system"},
-							},
-							PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
-						}},
-						Ports: []networkingv1.NetworkPolicyPort{
-							{Protocol: &udp, Port: &dnsPort},
-							{Protocol: &tcp, Port: &dnsPort},
-						},
-					},
-				},
+				Egress: []networkingv1.NetworkPolicyEgressRule{{
+					To:    []networkingv1.NetworkPolicyPeer{{PodSelector: &target}},
+					Ports: toModel,
+				}},
 			},
 		},
 		&networkingv1.NetworkPolicy{

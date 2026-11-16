@@ -91,6 +91,14 @@ var _ = Describe("RedTeamRun harness", func() {
 		pod := job.Spec.Template.Spec
 		Expect(pod.AutomountServiceAccountToken).To(HaveValue(BeFalse()))
 		Expect(pod.InitContainers).To(ConsistOf(HaveField("Name", "wait-for-target")))
+
+		By("pointing the name target at the Service's IP, so garak needs no DNS")
+		var svc corev1.Service
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: targetName}, &svc)).To(Succeed())
+		Expect(svc.Spec.ClusterIP).NotTo(BeEmpty())
+		Expect(pod.HostAliases).To(Equal([]corev1.HostAlias{
+			{IP: svc.Spec.ClusterIP, Hostnames: []string{targetName}},
+		}))
 		Expect(pod.Containers[0].Image).To(Equal(harnessImage))
 		Expect(pod.Containers[0].Args).To(Equal([]string{
 			"--target_type", "ollama",

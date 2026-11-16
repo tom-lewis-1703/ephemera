@@ -78,6 +78,14 @@ var _ = Describe("RedTeamRun sandbox lockdown", func() {
 				Expect(policy.Spec.Ingress).To(BeEmpty())
 				Expect(policy.Spec.Egress).To(BeEmpty())
 			}
+			if policy.Name == "harness-egress" {
+				// One rule, to the target model's port. Nothing allows DNS.
+				Expect(policy.Spec.Egress).To(HaveLen(1))
+				Expect(policy.Spec.Egress[0].To).To(ConsistOf(
+					HaveField("PodSelector.MatchLabels", HaveKeyWithValue(appLabel, targetName))))
+				Expect(policy.Spec.Egress[0].Ports).To(ConsistOf(
+					HaveField("Port.IntVal", targetPort)))
+			}
 		}
 
 		By("running the target model as a non-root user with no extra privileges")

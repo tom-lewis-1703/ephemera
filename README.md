@@ -2,7 +2,7 @@
 
 Give every AI red team run its own disposable Kubernetes sandbox. The run attacks the model, the results come out, and the sandbox gets deleted.
 
-It works on a local kind cluster. Each sandbox denies all network traffic except garak reaching the model, and an [escape test](#escape-tests) blocked 17 of 17 attempts to get out, with no probe errors. Read [Limitations](#limitations) for what that does and doesn't cover.
+It works on a local kind cluster. Each sandbox denies all network traffic except garak reaching the model, DNS included, and an [escape test](#escape-tests) blocked 19 of 19 attempts to get out, with no probe errors. Read [Limitations](#limitations) for what that does and doesn't cover.
 
 ## Why I'm building this
 
@@ -61,7 +61,8 @@ A few design choices behind that:
 - **Results come back through the termination message.** When garak finishes, a small wrapper script writes a summary of its scores to `/dev/termination-log`. Kubernetes copies that into the pod's status, where the operator reads it, so the operator doesn't need access to pod logs. If garak fails, the end of its log becomes the message instead, and that ends up in the run's status.
 - **A failed run stays failed.** The Job doesn't retry, since a second attempt would mix results from two runs.
 - **No pod gets a Kubernetes API token.** Neither the model nor garak has any reason to talk to the cluster.
-- **The network is denied by default.** Each sandbox gets three NetworkPolicies. One denies all traffic in and out, and two make exceptions: garak can reach the model on port 11434 and cluster DNS, and the model accepts connections only from garak. The model can't start any connections at all. The policies are created before anything runs in the sandbox, so no pod ever runs without them.
+- **The network is denied by default.** Each sandbox gets three NetworkPolicies. One denies all traffic in and out, and two make exceptions: garak can reach the model on port 11434, and the model accepts connections only from garak. The model can't start any connections at all. The policies are created before anything runs in the sandbox, so no pod ever runs without them.
+- **The sandbox has no DNS.** garak reaches the model by the name `target`, which would normally take a DNS lookup. Cluster DNS forwards lookups for outside names, so a pod that can use it can leak data through the names it asks for, even with every connection blocked. Instead, the operator puts the model's Service IP in the garak pod's hosts file (`hostAliases`), and no policy allows DNS.
 - **Pods can't run as root.** The namespace enforces the [restricted Pod Security level](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted), so the API server rejects any pod that runs as root, adds Linux capabilities or skips the default seccomp profile. Both images run as user 1000.
 
 ## Status
@@ -79,7 +80,6 @@ A few design choices behind that:
 
 ## Limitations
 
-- **DNS is still open to garak.** garak needs cluster DNS to find the model, and cluster DNS forwards outside lookups. So garak can't connect anywhere else, but it could still leak data out through DNS queries.
 - **The metadata check proves less than it looks.** kind has no cloud metadata service, so `169.254.169.254` would be unreachable even without the policies. It's in the escape test for when this runs on a cloud cluster.
 - **It's only been tested on kind with Calico.** The policies depend on a network plugin that enforces them, and kind's default plugin doesn't.
 - **Model output varies between runs.** Three runs of the same sample scored `goodside.WhoIsRiley` at 3/6, 6/6 and 4/6. Pinned images make the setup repeatable, but not the answers, so the results should be read as rates across many prompts and generations.
@@ -167,17 +167,17 @@ kind delete cluster --name ephemera
 hack/escape-test.sh
 ```
 
-It tries the internet, the Kubernetes API, the kubelet, the cloud metadata address, the other run's model and the decoy, and checks that a pod outside the sandbox can't reach the model. It also tries to start a privileged root pod in the sandbox.
+It tries the internet, the Kubernetes API, the kubelet, the cloud metadata address, cluster DNS, the other run's model and the decoy, and checks that a pod outside the sandbox can't reach the model. It also tries to start a privileged root pod in the sandbox.
 
-Each connection ends up as `open`, `closed` (it timed out or the network was unreachable, which is what a policy drop looks like), `refused` (something answered, so the packet got through) or `error` (the probe itself failed). Only `closed` counts as blocked, and a privileged pod only counts as blocked if Pod Security is what rejected it. Controls check that each probe works and can tell a refusal from a drop: garak reaches its own model, the model reaches itself, and a pod outside the sandbox reaches the decoy and gets refused on a port nothing listens on.
+Each connection ends up as `open`, `closed` (it timed out or the network was unreachable, which is what a policy drop looks like), `refused` (something answered, so the packet got through) or `error` (the probe itself failed). Only `closed` counts as blocked, and a privileged pod only counts as blocked if Pod Security is what rejected it. Controls check that each probe works and can tell a refusal from a drop: garak reaches its own model, the model reaches itself, and a pod outside the sandbox reaches the decoy, gets an answer from cluster DNS and gets refused on a port nothing listens on.
 
-Before the lockdown, only 1 of the 16 escape attempts was blocked, and that was the metadata address, which kind doesn't have. After it:
+Before the lockdown, only 1 of the 16 escape attempts was blocked, and that was the metadata address, which kind doesn't have. The first version of the lockdown blocked 17 of 17, but it still let garak use cluster DNS, and the test didn't count that as an escape. Now DNS is blocked too, and the test sends a DNS query from inside the sandbox to check:
 
 ```text
-blocked 17 of 17 escape attempts, 22 of 22 checks as expected, 0 probe errors
+blocked 19 of 19 escape attempts, 24 of 24 checks as expected, 0 probe errors
 ```
 
-The script exits nonzero if any check doesn't match, including any probe error. To check that, I ran a copy with four failures planted: a missing pod, a missing shell, a refusal where a block was expected, and a bad `kubectl run` flag. All four showed up as failures, and it reported 9 of 17 blocked instead of 17.
+The script exits nonzero if any check doesn't match, including any probe error. To check that, I ran a copy of the 17-attempt version with four failures planted: a missing pod, a missing shell, a refusal where a block was expected, and a bad `kubectl run` flag. All four showed up as failures, and it reported 9 of 17 blocked instead of 17.
 
 ## Routing setup from the preview design
 
